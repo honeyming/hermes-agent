@@ -198,14 +198,37 @@ class _SherpaKwsEngine(_Engine):
             for prof, p in ww.enrolled_profile_phrases().items():
                 phrase_map.setdefault(p.strip(), prof)
         phrases = list(phrase_map)
-        tokens = text2token([p.upper() for p in phrases], tokens=str(d / "tokens.txt"), tokens_type="bpe",
-                            bpe_model=str(d / "bpe.model"))
+        # Runtime tokenization of the arbitrary phrases. English GigaSpeech
+        # models use BPE; Chinese wenetspeech-style models are pinyin-based
+        # and ship without bpe.model, so fall back to ppinyin there.
+        bpe_model = d / "bpe.model"
+        tokens_type = "bpe" if bpe_model.exists() else "ppinyin"
+        tokenizer_kwargs = {"bpe_model": str(bpe_model)} if tokens_type == "bpe" else {}
+        tokenized_phrases = []
+        for p in phrases:
+            text_for_tokens = p.upper() if tokens_type == "bpe" else p
+            try:
+                toks = text2token(
+                    [text_for_tokens],
+                    tokens=str(d / "tokens.txt"),
+                    tokens_type=tokens_type,
+                    **tokenizer_kwargs,
+                )[0]
+            except Exception as exc:
+                logger.warning("wake sherpa: phrase %r tokenization failed: %s", p, exc)
+                toks = []
+            if toks:
+                tokenized_phrases.append((p, toks))
+            else:
+                logger.warning("wake sherpa: skipping phrase %r (no tokens)", p)
+        if not tokenized_phrases:
+            raise RuntimeError("sherpa KWS: no wake phrase could be tokenized")
         # sherpa keyword entries reject spaces in the @display-name; underscore them and
         # map display → profile for match routing.
         self._display_to_profile: dict[str, str] = {}
         kw = tempfile.NamedTemporaryFile(mode="w", suffix=".txt", prefix="hermes-kws-", delete=False,
                                          encoding="utf-8")
-        for p, toks in zip(phrases, tokens):
+        for p, toks in tokenized_phrases:
             display = p.upper().replace(" ", "_")
             self._display_to_profile[display] = phrase_map[p]
             kw.write(" ".join(toks) + f" @{display}\n")

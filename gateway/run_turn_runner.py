@@ -1107,12 +1107,12 @@ class TurnRunner:
         )
 
     def _build_fresh_agent(self, turn_route, platform_key, combined_ephemeral, max_iterations,
-                           reasoning_config, pr, skip_context_files):
+                           reasoning_config, pr, skip_context_files, is_voice_turn=False):
         from gateway.run import _checkpoint_agent_kwargs
         ctx = self._ctx
         runner = self._runner
         src = ctx.source
-        return ctx.AIAgent(
+        agent = ctx.AIAgent(
             model=turn_route["model"], **turn_route["runtime"], **_checkpoint_agent_kwargs(ctx.user_config),
             max_iterations=max_iterations, quiet_mode=True, verbose_logging=False,
             enabled_toolsets=ctx.enabled_toolsets, disabled_toolsets=ctx.disabled_toolsets,
@@ -1135,8 +1135,14 @@ class TurnRunner:
             # Keep the persona even with minimal context: soul identity is one small file.
             load_soul_identity=True,
         )
+        # Tag so model-fallback / switch_model re-resolve paths keep voice reasoning on voice turns.
+        try:
+            agent._is_voice_turn = bool(is_voice_turn)
+        except Exception:  # pragma: no cover — agent uses __slots__ or other restrictive class
+            pass
+        return agent
 
-    def _resolve_turn_agent(self, turn_route, platform_key, combined_ephemeral, max_iterations, reasoning_config, pr):
+    def _resolve_turn_agent(self, turn_route, platform_key, combined_ephemeral, max_iterations, reasoning_config, pr, is_voice_turn=False):
         """Reuse this session's cached AIAgent (frozen system prompt + tool schemas → prompt cache
         hits) or build a fresh one. Returns (agent, reused_cached_agent)."""
         ctx = self._ctx
@@ -1160,11 +1166,19 @@ class TurnRunner:
         # configured after caching must reach the next turn; per-session serialization keeps it safe.
         if found.reused and agent is not None:
             self._runner._apply_fallback_chain_to_agent(agent, runner._refresh_fallback_model())
+            # Inherit the voice tag from the current turn when reusing a cached agent (the tag was
+            # set on build; reuse may have come from a prior text turn).
+            if is_voice_turn:
+                try:
+                    agent._is_voice_turn = True
+                except Exception:  # pragma: no cover
+                    pass
         if found.evicted is not None:
             self._release_evicted_agent(found.evicted)
         if agent is None:
             agent = self._build_fresh_agent(
                 turn_route, platform_key, combined_ephemeral, max_iterations, reasoning_config, pr, skip_context_files,
+                is_voice_turn=is_voice_turn,
             )
             if cache_lock and cache is not None:
                 with cache_lock:
@@ -1932,13 +1946,25 @@ class TurnRunner:
                 "messages": [], "api_calls": 0, "tools": [],
             }
         pr = runner._provider_routing
-        reasoning_config = runner._resolve_session_reasoning_config(source=ctx.source, session_key=ctx.session_key, model=model)
+        # Voice turns route through ``voice.reasoning_effort`` (lighter, lower latency); text turns
+        # keep the global ``agent.reasoning_effort``. ``MessageType.VOICE`` is the platform tag the
+        # Telegram/Discord adapters stamp on inbound voice messages.
+        is_voice_turn = False
+        try:
+            from gateway.platforms.event import MessageType as _MessageType
+            is_voice_turn = ctx.message_type == _MessageType.VOICE
+        except Exception:  # pragma: no cover — defensive, never block a turn on this lookup
+            is_voice_turn = False
+        reasoning_config = runner._resolve_session_reasoning_config(
+            source=ctx.source, session_key=ctx.session_key, model=model, is_voice=is_voice_turn,
+        )
         runner._reasoning_config = reasoning_config
         runner._service_tier = runner._resolve_session_service_tier(source=ctx.source, session_key=ctx.session_key)
         stream_consumer, stream_delta_cb, interim_cb, want_interim = self._setup_stream_consumer(platform_key)
         turn_route = runner._resolve_turn_agent_config(ctx.message, model, runtime_kwargs)
         agent, reused_cached_agent = self._resolve_turn_agent(
             turn_route, platform_key, combined_ephemeral, max_iterations, reasoning_config, pr,
+            is_voice_turn=is_voice_turn,
         )
         if pending_fallback_notice:
             # Reuse the in-agent one-shot notice so the pre-agent provider switch is user-visible too.

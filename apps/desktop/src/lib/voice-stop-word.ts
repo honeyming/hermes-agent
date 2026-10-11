@@ -37,12 +37,93 @@ const STOP_PHRASES: readonly string[] = [
   'goodbye',
   'good bye',
   'bye',
-  'cancel'
+  'cancel',
+  '结束',
+  '结束吧',
+  '结束对话',
+  '结束语音',
+  '结束语音对话',
+  '退出',
+  '退出对话',
+  '退出语音',
+  '退出语音对话',
+  '停止',
+  '停止对话',
+  '停止语音',
+  '停止语音对话',
+  '再见',
+  '不说了',
+  '先这样',
+  '关闭语音',
+  '关闭语音对话'
+]
+
+// Canonical pause commands. Unlike stop commands, a pause only interrupts the
+// current spoken reply; the conversation stays open.
+const PAUSE_PHRASES: readonly string[] = [
+  '停',
+  '停下',
+  '停下吧',
+  '停一下',
+  '先停一下',
+  '暂停',
+  '暂停一下',
+  '别说了',
+  '别读了',
+  '别念了',
+  '不读了',
+  '不要再说了'
+]
+
+// Canonical resume commands - pick up the interrupted reply from where it
+// stopped, without starting a new agent turn.
+const RESUME_PHRASES: readonly string[] = [
+  '继续',
+  '继续读',
+  '继续朗读',
+  '继续念',
+  '继续吧',
+  '继续读吧',
+  '继续朗读吧',
+  '继续念吧',
+  '接着读',
+  '接着念',
+  '接着读吧',
+  '接着念吧',
+  'go on',
+  'continue',
+  'keep going',
+  'go ahead'
+]
+
+// Canonical dictation-mode commands - spoken while the hands-free voice
+// conversation is live, they switch the loop from "submit a turn" to
+// "append the transcript to the composer draft without sending".
+const DICTATION_PHRASES: readonly string[] = [
+  '听写',
+  '开始听写',
+  '语音听写',
+  '开始语音听写',
+  '听写模式'
 ]
 
 // Optional address prefixes so "hermes stop" / "ok stop" / "hey hermes, stop"
 // still count. Stripped before matching the core phrase.
-const ADDRESS_PREFIXES: readonly string[] = ['hey hermes', 'hey hermes,', 'hermes', 'hermes,', 'ok', 'okay', 'hey']
+const ADDRESS_PREFIXES: readonly string[] = [
+  'hey hermes',
+  'hey hermes,',
+  'hermes',
+  'hermes,',
+  'ok',
+  'okay',
+  'hey',
+  'hey xiaohe',
+  'hey xiaohe,',
+  '嘿小赫',
+  '嘿小赫，',
+  '小赫',
+  '小赫，'
+]
 
 // Normalise: Unicode-compose (so an NFD "отбой" from STT equals the NFC phrase
 // in config.yaml), lowercase, turn punctuation from ANY script into spaces
@@ -58,6 +139,35 @@ function normalize(text: string): string {
     .trim()
 }
 
+// Doubao ASR often hears the bot name as a homophone ("xiaohe / xiaohe / ...").
+// Normalise before display and before command matching so the bot name is
+// stable and address-prefixed stop/pause phrases still match.
+const BOT_NAME_ALIASES: Record<string, string> = {
+  '小贺': '小赫',
+  '小荷': '小赫',
+  '小和': '小赫',
+  '小何': '小赫',
+  '晓赫': '小赫',
+  '晓贺': '小赫',
+  '晓荷': '小赫',
+  '晓和': '小赫',
+  '晓何': '小赫'
+}
+
+export function normalizeBotName(text: string): string {
+  if (!text) {
+    return text
+  }
+
+  let normalized = text
+
+  for (const [alias, canonical] of Object.entries(BOT_NAME_ALIASES)) {
+    normalized = normalized.split(alias).join(canonical)
+  }
+
+  return normalized
+}
+
 function stripAddress(text: string): string {
   for (const prefix of ADDRESS_PREFIXES) {
     if (text === prefix) {
@@ -67,6 +177,10 @@ function stripAddress(text: string): string {
 
     if (text.startsWith(`${prefix} `)) {
       return text.slice(prefix.length + 1).trim()
+    }
+
+    if (/[^\x00-\x7F]/.test(prefix) && text.startsWith(prefix)) {
+      return text.slice(prefix.length).trim()
     }
   }
 
@@ -108,7 +222,7 @@ export function isVoiceStopCommand(
     return false
   }
 
-  const normalized = normalize(transcript)
+  const normalized = normalize(normalizeBotName(transcript))
 
   if (!normalized) {
     return false
@@ -121,6 +235,84 @@ export function isVoiceStopCommand(
 
   for (const candidate of candidates) {
     if (phrases.includes(candidate)) {
+      return true
+    }
+  }
+
+  return false
+}
+
+/**
+ * True when the entire spoken utterance is a pause command (interrupt the
+ * current reply, keep the conversation open).
+ */
+export function isVoicePauseCommand(transcript: string): boolean {
+  if (!transcript) {
+    return false
+  }
+
+  const normalized = normalize(normalizeBotName(transcript))
+
+  if (!normalized) {
+    return false
+  }
+
+  const candidates = new Set([normalized, stripAddress(normalized)])
+
+  for (const candidate of candidates) {
+    if (PAUSE_PHRASES.includes(candidate)) {
+      return true
+    }
+  }
+
+  return false
+}
+
+/**
+ * True when the entire spoken utterance asks to resume the interrupted reply
+ * (e.g. resume / keep reading).
+ */
+export function isVoiceResumeCommand(transcript: string): boolean {
+  if (!transcript) {
+    return false
+  }
+
+  const normalized = normalize(normalizeBotName(transcript))
+
+  if (!normalized) {
+    return false
+  }
+
+  const candidates = new Set([normalized, stripAddress(normalized)])
+
+  for (const candidate of candidates) {
+    if (RESUME_PHRASES.includes(candidate)) {
+      return true
+    }
+  }
+
+  return false
+}
+
+/**
+ * True when the entire spoken utterance asks to enter dictation mode
+ * (transcript -> composer draft, no agent turn / no spoken reply).
+ */
+export function isVoiceDictationCommand(transcript: string): boolean {
+  if (!transcript) {
+    return false
+  }
+
+  const normalized = normalize(normalizeBotName(transcript))
+
+  if (!normalized) {
+    return false
+  }
+
+  const candidates = new Set([normalized, stripAddress(normalized)])
+
+  for (const candidate of candidates) {
+    if (DICTATION_PHRASES.includes(candidate)) {
       return true
     }
   }

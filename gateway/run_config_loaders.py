@@ -146,17 +146,17 @@ class GatewayConfigLoadersMixin:
         return self._load_ephemeral_system_prompt()
 
     @staticmethod
-    def _load_reasoning_config(model: str = "") -> dict | None:
+    def _load_reasoning_config(model: str = "", *, is_voice: bool = False) -> dict | None:
         """Reasoning effort from config.yaml via :func:`hermes_constants.resolve_reasoning_config`.
 
-        Per-model override > global ``agent.reasoning_effort``; YAML False = disabled. Empty
-        ``model`` uses ``model.default``.
+        Per-model override > ``voice.reasoning_effort`` (when ``is_voice=True``) >
+        global ``agent.reasoning_effort``; YAML False = disabled. Empty ``model`` uses ``model.default``.
 
         Closes #21256.
         """
         from gateway.run import _load_gateway_config
         from hermes_constants import resolve_reasoning_config
-        return resolve_reasoning_config(_load_gateway_config(), model)
+        return resolve_reasoning_config(_load_gateway_config(), model, is_voice=is_voice)
 
     @staticmethod
     def _parse_reasoning_command_args(raw_args: str) -> tuple[str, bool]:
@@ -174,19 +174,20 @@ class GatewayConfigLoadersMixin:
 
     def _resolve_session_reasoning_config(
         self, *, source: Optional[SessionSource] = None, session_key: Optional[str] = None,
-        model: str = "",
+        model: str = "", is_voice: bool = False,
     ) -> dict | None:
         """Session ``/reasoning --session`` > per-model ``agent.reasoning_overrides`` > global.
 
         ``model`` must be the session's *effective* model (session ``/model`` override included);
-        empty uses ``model.default``.
+        empty uses ``model.default``. ``is_voice`` routes through ``voice.reasoning_effort`` as
+        the global fallback so voice turns can use a lighter effort than text turns.
         """
         resolved_session_key = self._resolve_session_key_or_none(source, session_key)
         if resolved_session_key:
             _r_state = self._peek_session_state(resolved_session_key)
             if _r_state is not None and _r_state.conversation.reasoning_override is not None:
                 return _r_state.conversation.reasoning_override
-        return self._load_reasoning_config(model)
+        return self._load_reasoning_config(model, is_voice=is_voice)
 
     def _set_session_reasoning_override(self, session_key: str, reasoning_config: Optional[dict]) -> None:
         """Set or clear the session-scoped reasoning override."""

@@ -1129,6 +1129,11 @@ export const en: Translations = {
         noneAvailable: 'No pets available to turn on right now.',
         turnOnFailed: 'Could not turn the pet on.',
         turnOffFailed: 'Could not turn the pet off.'
+      },
+      avatar: {
+        title: 'Virtual Companion',
+        intro:
+          'Show an always-on-top 2D companion on the desktop: follows your cursor, responds to clicks, and supports voice conversations. Hidden by default — turn it on here.'
       }
     },
     fieldLabels: FIELD_LABELS,

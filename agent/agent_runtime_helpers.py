@@ -2500,11 +2500,12 @@ def switch_model(
     if hasattr(agent, "context_compressor") and agent.context_compressor:
         _update_switch_compressor(agent, custom_providers, effective_context_length, snapshot)
     # Re-read the per-model reasoning_effort override so it applies immediately (per-model > global;
-    # YAML False = disabled).
+    # YAML False = disabled). Voice turns keep using ``voice.reasoning_effort`` across model switches.
     try:
         from hermes_constants import resolve_reasoning_config
         from hermes_cli.config import load_config as _sm_load_config
-        agent.reasoning_config = resolve_reasoning_config(_sm_load_config() or {}, agent.model)
+        is_voice = bool(getattr(agent, "_is_voice_turn", False))
+        agent.reasoning_config = resolve_reasoning_config(_sm_load_config() or {}, agent.model, is_voice=is_voice)
         logger.info(
             "switch_model: reasoning_config resolved for %s: %s", agent.model, agent.reasoning_config
         )

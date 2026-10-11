@@ -7,7 +7,9 @@ import { PetSprite } from '@/components/pet/pet-sprite'
 import { type PetZoomAnchor, usePetZoomGesture } from '@/components/pet/use-pet-zoom-gesture'
 import { Mail } from '@/lib/icons'
 import { isSubmitEnter } from '@/lib/ime'
-import { $petActivity, $petInfo, setPetInfo } from '@/store/pet'
+import { AvatarRenderer } from '@/components/avatar/avatar-renderer'
+import { $avatarEnabled, setAvatarEnabled, setAvatarMouthLevel } from '@/store/avatar'
+import { $petActivity, $petInfo, $petUnread, setPetInfo } from '@/store/pet'
 import { overlayWindowSize } from '@/store/pet-overlay'
 import { mirrorPetPluginMessages } from '@/store/pet-plugin-messages'
 import { setAwaitingResponse, setBusy } from '@/store/session'
@@ -64,6 +66,7 @@ interface DragState {
 
 export function PetOverlayApp() {
   const info = useStore($petInfo)
+  const avatarEnabled = useStore($avatarEnabled)
   const [composerOpen, setComposerOpen] = useState(false)
   const [draft, setDraft] = useState('')
   // Mirrored from the main renderer: a finish landed while you were away.
@@ -98,6 +101,9 @@ export function PetOverlayApp() {
       setAwaitingResponse(Boolean(payload.awaiting))
       setUnread(Boolean(payload.unread))
       mirrorPetPluginMessages(payload.pluginMessages)
+      $petUnread.set(Boolean(payload.unread))
+      setAvatarEnabled(Boolean(payload.avatarEnabled))
+      setAvatarMouthLevel(Number(payload.mouthLevel) || 0)
 
       // Play a reaction on a new id (ignore the first sync, which just primes it).
       const reaction = payload.reaction ?? null
@@ -126,7 +132,7 @@ export function PetOverlayApp() {
   // renderer still receives mousemove so we can re-arm the moment the cursor
   // returns to a solid pixel.
   useEffect(() => {
-    setIgnore(true)
+    setIgnore(!avatarEnabled)
 
     // True when the point sits on a solid sprite pixel or on the pet's other
     // interactive chrome (bubble, mail button). Over the canvas we sample the
@@ -183,7 +189,7 @@ export function PetOverlayApp() {
       window.removeEventListener('mousemove', onMove)
       clearTimeout(clickTimerRef.current)
     }
-  }, [])
+  }, [avatarEnabled])
 
   // The whole window must stay interactive while the composer is open (so the
   // input keeps focus); focus it on open. The overlay is a non-activating panel
@@ -261,6 +267,13 @@ export function PetOverlayApp() {
         type: 'bounds'
       })
 
+      return
+    }
+
+    // Avatar mode owns its own click/double-click feedback (blush + hearts in
+    // AvatarRenderer) and has no composer/app-toggle semantics, so a plain
+    // click ends here instead of toggling the composer or the app window.
+    if (avatarEnabled) {
       return
     }
 
@@ -363,6 +376,20 @@ export function PetOverlayApp() {
     window.hermesDesktop?.petOverlay?.setBounds(bounds)
     window.hermesDesktop?.petOverlay?.control({ bounds, type: 'bounds' })
   }, [info.enabled, info.spritesheetBase64, info.scale, info.frameW, info.frameH])
+
+  if (avatarEnabled && !(info.enabled && info.spritesheetBase64)) {
+    return (
+      <div
+        onPointerDown={onPetPointerDown}
+        onPointerMove={onPetPointerMove}
+        onPointerUp={onPetPointerUp}
+        ref={petRef}
+        style={{ cursor: 'grab', height: '100vh', touchAction: 'none', width: '100vw' }}
+      >
+        <AvatarRenderer />
+      </div>
+    )
+  }
 
   if (!info.enabled || !info.spritesheetBase64) {
     return null

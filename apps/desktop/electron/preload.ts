@@ -36,6 +36,13 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
   // decision is stamped onto every backend the app spawns.
   guestOnboardingEnabled: launchFlags?.guestOnboarding === true,
   localSkin: localSkin && typeof localSkin === 'object' ? localSkin : null,
+  // Local patch (avatar / now-playing): main.ts registers these handlers and the
+  // renderer reads them through this bridge.
+  getAvatarLines: () => ipcRenderer.invoke('hermes:avatar-lines:get'),
+  getAvatarAssets: () => ipcRenderer.invoke('hermes:avatar-assets:get'),
+  getAvatarPersona: () => ipcRenderer.invoke('hermes:avatar-persona:get'),
+  getAvatarImage: () => ipcRenderer.invoke('hermes:avatar-image:read'),
+  getNowPlaying: () => ipcRenderer.invoke('hermes:media:now-playing'),
   getConnection: (profile, opts) => ipcRenderer.invoke('hermes:connection', profile, opts),
   // Loopback origin that hosts YouTube's player for the file:// renderer.
   getEmbedHostOrigin: () => ipcRenderer.invoke('hermes:embed-host:origin'),
@@ -117,6 +124,15 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
       ipcRenderer.on('hermes:pet-overlay:control', listener)
 
       return () => ipcRenderer.removeListener('hermes:pet-overlay:control', listener)
+    },
+    // Local patch (avatar follows the mouse): global cursor position in screen
+    // coords, pushed from main ~30Hz so the avatar tracks the pointer even
+    // outside its own small window.
+    onCursor: callback => {
+      const listener = (_event, point) => callback(point)
+      ipcRenderer.on('hermes:pet-overlay:cursor', listener)
+
+      return () => ipcRenderer.removeListener('hermes:pet-overlay:cursor', listener)
     }
   },
   // HUD mode: the chrome-free floating chat. A full app renderer (own gateway)

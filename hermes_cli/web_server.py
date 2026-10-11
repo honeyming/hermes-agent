@@ -1008,6 +1008,7 @@ from hermes_cli.web_routers import (
     status as _status_routes,
     actions as _actions_routes,
     audio as _audio_routes,
+    avatar as _avatar_routes,
     display as _display_routes,
     sessions as _sessions_routes,
     profiles as _profiles_routes,
@@ -1034,6 +1035,7 @@ app.include_router(_local_models_routes.router)
 app.include_router(_status_routes.router)
 app.include_router(_actions_routes.router)
 app.include_router(_audio_routes.router)
+app.include_router(_avatar_routes.router)
 app.include_router(_display_routes.router)
 app.include_router(_actions_routes.status_router)
 app.include_router(_sessions_routes.list_router)

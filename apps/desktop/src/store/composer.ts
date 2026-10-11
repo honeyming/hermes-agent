@@ -92,7 +92,23 @@ let nextVoiceStartRequest = 0
 let handledVoiceStartRequest = 0
 export const createComposerAttachmentOccurrenceId = (): string => crypto.randomUUID()
 
-export const requestVoiceConversationStart = (): void => $voiceConversationStartRequest.set(++nextVoiceStartRequest)
+let pendingWakeGreeting = false
+
+export const requestVoiceConversationStart = (): void => {
+  // The wake handoff doubles as a "say something" request: the next conversation
+  // start hands 豆包 an opening line (see WAKE_ACKS in use-realtime-voice-*), so
+  // 马哥 hears 小赫 answer the wake word instead of only a chime.
+  pendingWakeGreeting = true
+  $voiceConversationStartRequest.set(++nextVoiceStartRequest)
+}
+
+/** One-shot: the realtime conversation consumes this as it opens a session. */
+export const takeWakeGreeting = (): boolean => {
+  const pending = pendingWakeGreeting
+  pendingWakeGreeting = false
+
+  return pending
+}
 
 export const takeVoiceConversationStart = (current: number): boolean => {
   if (current <= handledVoiceStartRequest) {

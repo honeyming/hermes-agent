@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
-import { interceptsTypedVoiceStop, isVoiceStopCommand } from './voice-stop-word'
+import {
+  interceptsTypedVoiceStop,
+  isVoiceDictationCommand,
+  isVoiceStopCommand
+} from './voice-stop-word'
 
 describe('isVoiceStopCommand', () => {
   it('matches bare stop commands', () => {
@@ -112,5 +116,25 @@ describe('interceptsTypedVoiceStop', () => {
 
   it('passes through when attachments ride along (real payload)', () => {
     expect(interceptsTypedVoiceStop(true, 'stop', 1)).toBe(false)
+  })
+})
+
+describe('isVoiceDictationCommand', () => {
+  it('matches bare dictation commands', () => {
+    for (const phrase of ['听写', '开始听写', '语音听写', '开始语音听写', '听写模式', '听写。']) {
+      expect(isVoiceDictationCommand(phrase)).toBe(true)
+    }
+  })
+
+  it('matches dictation commands addressed to Hermes', () => {
+    for (const phrase of ['小赫听写', '小赫，听写', '嘿小赫，开始听写']) {
+      expect(isVoiceDictationCommand(phrase)).toBe(true)
+    }
+  })
+
+  it('does not match ordinary requests', () => {
+    for (const phrase of ['今天天气怎么样', '帮我写个邮件', '听写这个词是什么意思', '停']) {
+      expect(isVoiceDictationCommand(phrase)).toBe(false)
+    }
   })
 })

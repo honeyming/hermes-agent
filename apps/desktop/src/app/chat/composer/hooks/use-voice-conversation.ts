@@ -14,8 +14,13 @@ import {
   stopVoicePlayback,
   takeVoicePlaybackInterrupted
 } from '@/lib/voice-playback'
-import { isVoiceStopCommand } from '@/lib/voice-stop-word'
 import { isTtsEcho } from '@/lib/voice-tts-echo'
+import {
+  isVoiceDictationCommand,
+  isVoicePauseCommand,
+  isVoiceResumeCommand,
+  isVoiceStopCommand
+} from '@/lib/voice-stop-word'
 import { notify, notifyError } from '@/store/notifications'
 import { $voicePlayback } from '@/store/voice-playback'
 import { $autoSpeakReplies, $bargeInEnabled, $bargeInThresholdMultiplier, $voiceSilenceMs } from '@/store/voice-prefs'
@@ -41,6 +46,9 @@ interface VoiceConversationOptions {
   onInterrupt?: () => Promise<void> | void
   onStopWord?: () => void
   onSubmit: (text: string) => Promise<void> | void
+  /** Dictation-mode target: append a recognized sentence to the composer draft
+   *  without submitting a turn or speaking a reply. */
+  onDictationText?: (text: string) => void
   onTranscribeAudio?: (audio: Blob, owner?: ResolvedOwner) => Promise<string>
   pendingResponse: () => PendingVoiceResponse | null
   consumePendingResponse: () => void
@@ -85,6 +93,7 @@ export function useVoiceConversation({
   onInterrupt,
   onStopWord,
   onSubmit,
+  onDictationText,
   onTranscribeAudio,
   pendingResponse,
   consumePendingResponse,
@@ -136,6 +145,9 @@ export function useVoiceConversation({
   // created it and would otherwise hold that stale submit forever. Read the
   // latest callback at call time, mirroring `onInterruptRef` (#123357).
   const onSubmitRef = useRef(onSubmit)
+  const onDictationTextRef = useRef(onDictationText)
+  const dictationRef = useRef(false)
+  const dictationPausedRef = useRef(false)
 
   // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
   useEffect(() => {
@@ -151,6 +163,11 @@ export function useVoiceConversation({
   useEffect(() => {
     onStopWordRef.current = onStopWord
   }, [onStopWord])
+
+  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
+  useEffect(() => {
+    onDictationTextRef.current = onDictationText
+  }, [onDictationText])
 
   const beforeMicOpenRef = useRef(beforeMicOpen)
 
@@ -299,6 +316,72 @@ export function useVoiceConversation({
           // conversation instead of being submitted as a turn. Only whole-
           // utterance stop commands match, so "stop the container" still goes
           // through as a real request.
+          if (isVoiceDictationCommand(transcript)) {
+            dictationRef.current = true
+            dictationPausedRef.current = false
+            notify({
+              id: 'voice-dictation',
+              kind: 'info',
+              icon: 'mic',
+              message: '听写模式：说"停"暂停，说"继续"恢复，说"退出"结束'
+            })
+            pendingStartRef.current = true
+            setStatus('idle')
+
+            return
+          }
+
+          if (dictationRef.current) {
+            if (isVoiceStopCommand(transcript)) {
+              dictationRef.current = false
+              dictationPausedRef.current = false
+              dropSpeechSession()
+              setStatus('idle')
+              onStopWordRef.current?.()
+
+              return
+            }
+
+            if (isVoicePauseCommand(transcript)) {
+              dictationPausedRef.current = true
+              notify({
+                id: 'voice-dictation',
+                kind: 'info',
+                icon: 'mic',
+                message: '听写已暂停，说"继续"恢复'
+              })
+              pendingStartRef.current = true
+              setStatus('idle')
+
+              return
+            }
+
+            if (isVoiceResumeCommand(transcript)) {
+              dictationPausedRef.current = false
+              notify({
+                id: 'voice-dictation',
+                kind: 'info',
+                icon: 'mic',
+                message: '继续听写'
+              })
+              pendingStartRef.current = true
+              setStatus('idle')
+
+              return
+            }
+
+            // Paused dictation only listens for commands — real text is
+            // dropped so it never lands in the draft.
+            if (!dictationPausedRef.current) {
+              onDictationTextRef.current?.(transcript)
+            }
+
+            pendingStartRef.current = true
+            setStatus('idle')
+
+            return
+          }
+
           if (isVoiceStopCommand(transcript)) {
             dropSpeechSession()
             setStatus('idle')
@@ -952,6 +1035,8 @@ export function useVoiceConversation({
 
     setMuted(false)
     awaitingSpokenResponseRef.current = false
+    dictationRef.current = false
+    dictationPausedRef.current = false
     dropSpeechSession()
     consumePendingResponse()
     // A fresh conversation: its owner is resolved now and kept to the end.
@@ -975,6 +1060,8 @@ export function useVoiceConversation({
     handle.cancel()
     turnClosingRef.current = false
     awaitingSpokenResponseRef.current = false
+    dictationRef.current = false
+    dictationPausedRef.current = false
     dropSpeechSession()
     consumePendingResponse()
     // Conversation over: drop the STT lease to the owner that acquired it,

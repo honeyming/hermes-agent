@@ -1,4 +1,4 @@
-import { type ChildProcess, execFileSync, spawn } from 'node:child_process'
+import { type ChildProcess, execFile, execFileSync, spawn } from 'node:child_process'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import http from 'node:http'
@@ -1216,6 +1216,173 @@ if (IS_WINDOWS || process.platform === 'linux') {
 
 ipcMain.handle('hermes:get-remote-display-reason', () => REMOTE_DISPLAY_REASON)
 ipcMain.handle('hermes:embed-host:origin', () => embedHostOrigin())
+
+// Editable avatar phrase library. The overlay loads avatar-lines.json from
+// userData (seeded from the bundled default on first request) so the user can
+// customize the cyber-girlfriend's lines without rebuilding the app.
+ipcMain.handle('hermes:avatar-lines:get', async () => {
+  try {
+    const userPath = path.join(app.getPath('userData'), 'avatar-lines.json')
+    if (!fs.existsSync(userPath)) {
+      const bundled = path.join(APP_ROOT, 'dist', 'avatar-lines.json')
+      if (fs.existsSync(bundled)) {
+        fs.copyFileSync(bundled, userPath)
+      }
+    }
+    if (!fs.existsSync(userPath)) {
+      return null
+    }
+    const lines = JSON.parse(fs.readFileSync(userPath, 'utf8'))
+    return { path: userPath, lines }
+  } catch {
+    return null
+  }
+})
+
+// User-replaceable avatar assets: the overlay loads avatar.webp /
+// avatar-slow.webp / avatar-still.png from userData (seeded from the bundled
+// defaults on first request) so dropping a new file in lets the user restyle
+// the cyber girlfriend without rebuilding the app.
+ipcMain.handle('hermes:avatar-assets:get', async () => {
+  const names = ['avatar.webp', 'avatar-slow.webp', 'avatar-still.png'] as const
+  const result: Record<string, string> = {}
+  try {
+    for (const name of names) {
+      const userPath = path.join(app.getPath('userData'), name)
+      if (!fs.existsSync(userPath)) {
+        const bundled = path.join(APP_ROOT, 'dist', name)
+        if (fs.existsSync(bundled)) {
+          fs.copyFileSync(bundled, userPath)
+        }
+      }
+      const chosen = fs.existsSync(userPath) ? userPath : path.join(APP_ROOT, 'dist', name)
+      result[name] = pathToFileURL(chosen).toString()
+    }
+    return result
+  } catch {
+    return null
+  }
+})
+
+// Editable cyber-girlfriend persona (userData avatar-persona.md, seeded from
+// the bundled default). Flavor text for proactive lines, vision replies,
+// selfie prompts and song lyrics. Survives upgrades because userData is not
+// replaced by the installer.
+ipcMain.handle('hermes:avatar-persona:get', async () => {
+  try {
+    const userPath = path.join(app.getPath('userData'), 'avatar-persona.md')
+    if (!fs.existsSync(userPath)) {
+      const bundled = path.join(APP_ROOT, 'dist', 'avatar-persona.md')
+      if (fs.existsSync(bundled)) {
+        fs.copyFileSync(bundled, userPath)
+      }
+    }
+    const chosen = fs.existsSync(userPath) ? userPath : path.join(APP_ROOT, 'dist', 'avatar-persona.md')
+    if (!fs.existsSync(chosen)) {
+      return null
+    }
+    return { path: chosen, text: fs.readFileSync(chosen, 'utf8') }
+  } catch {
+    return null
+  }
+})
+
+// Current avatar image as a base64 data URL (userData override first, bundled
+// fallback second). Used as the MiniMax subject_reference so selfies keep the
+// avatar's face.
+ipcMain.handle('hermes:avatar-image:read', async () => {
+  try {
+    const names = ['avatar-still.png', 'avatar.webp', 'avatar-slow.webp'] as const
+    let chosen = ''
+    for (const name of names) {
+      const userPath = path.join(app.getPath('userData'), name)
+      if (fs.existsSync(userPath)) {
+        chosen = userPath
+        break
+      }
+    }
+    if (!chosen) {
+      for (const name of names) {
+        const bundled = path.join(APP_ROOT, 'dist', name)
+        if (fs.existsSync(bundled)) {
+          chosen = bundled
+          break
+        }
+      }
+    }
+    if (!chosen) {
+      return null
+    }
+    const mime = chosen.toLowerCase().endsWith('.png') ? 'image/png' : 'image/webp'
+    const base64 = fs.readFileSync(chosen).toString('base64')
+    return { dataUrl: `data:${mime};base64,${base64}` }
+  } catch {
+    return null
+  }
+})
+
+// Now-playing (Windows SMTC) so the cyber girlfriend can reference what the
+// user is listening to. A short PowerShell WinRT query, cached briefly so idle
+// composition never hammers the media service.
+interface NowPlayingInfo {
+  title: string
+  artist: string
+  app: string
+  status: string
+}
+
+const NOW_PLAYING_PS = String.raw`Add-Type -AssemblyName System.Runtime.WindowsRuntime
+$null = [Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager, Windows.Media.Control, ContentType=WindowsRuntime]
+$asTaskGeneric = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation\`1' })[0]
+function Await($WinRtTask, $ResultType) {
+  $asTask = $asTaskGeneric.MakeGenericMethod($ResultType)
+  $netTask = $asTask.Invoke($null, @($WinRtTask))
+  $netTask.Wait(-1) | Out-Null
+  $netTask.Result
+}
+$manager = Await ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager]::RequestAsync()) ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager])
+$session = $manager.GetCurrentSession()
+if ($null -eq $session) { '{}' } else {
+  $info = Await ($session.TryGetMediaPropertiesAsync()) ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionMediaProperties])
+  $play = $session.GetPlaybackInfo()
+  [pscustomobject]@{ title = $info.Title; artist = $info.Artist; app = $session.SourceAppUserModelId; status = $play.PlaybackStatus.ToString() } | ConvertTo-Json -Compress
+}`
+
+let nowPlayingCache: { at: number; value: NowPlayingInfo | null } | null = null
+
+function readNowPlaying(): Promise<NowPlayingInfo | null> {
+  if (nowPlayingCache && Date.now() - nowPlayingCache.at < 12_000) {
+    return Promise.resolve(nowPlayingCache.value)
+  }
+  return new Promise(resolve => {
+    const encoded = Buffer.from(NOW_PLAYING_PS, 'utf16le').toString('base64')
+    execFile(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded],
+      { timeout: 8000, windowsHide: true, encoding: 'utf8', maxBuffer: 64 * 1024 },
+      (_error, stdout) => {
+        let value: NowPlayingInfo | null = null
+        try {
+          const parsed = JSON.parse(String(stdout || '').trim())
+          if (parsed && parsed.title) {
+            value = {
+              title: String(parsed.title),
+              artist: String(parsed.artist || ''),
+              app: String(parsed.app || ''),
+              status: String(parsed.status || '')
+            }
+          }
+        } catch {
+          value = null
+        }
+        nowPlayingCache = { at: Date.now(), value }
+        resolve(value)
+      }
+    )
+  })
+}
+
+ipcMain.handle('hermes:media:now-playing', () => readNowPlaying())
 
 // Keep the renderer's PROCESS priority normal while its windows are hidden —
 // a deprioritized renderer streams a live answer visibly slower once the
@@ -14164,6 +14331,18 @@ function spawnPetOverlayWindow(bounds) {
 
   attachRendererConsoleCapture(win, 'pet-overlay', rememberLog)
   loadWindowUrl(win, petOverlayUrl(), 'Pet overlay')
+
+  // Push the global cursor so the avatar can follow the mouse even when the
+  // pointer is outside this small always-on-top window.
+  const cursorTimer = setInterval(() => {
+    if (!win || win.isDestroyed()) {
+      clearInterval(cursorTimer)
+
+      return
+    }
+
+    win.webContents.send('hermes:pet-overlay:cursor', screen.getCursorScreenPoint())
+  }, 33)
 
   return win
 }

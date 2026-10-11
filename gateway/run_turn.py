@@ -1955,6 +1955,12 @@ class GatewayTurnMixin:
                 event._streamed_final_response = str(response or "")
             return None
 
+        # Streaming audio was delivered as a voice note; don't also echo the reply text.
+        if _streaming_tts_done:
+            with suppress(Exception):
+                event._streamed_final_response = str(response or "")
+            return None
+
         return response
 
     # Chat-side next steps keyed by HTTP status; Hermes commands only (/login is the gateway's own
@@ -4311,7 +4317,9 @@ class GatewayTurnMixin:
             persist_user_timestamp=persist_user_timestamp,
             persist_user_display_kind=persist_user_display_kind,
             reply_expected=reply_expected,
-            persist_user_display_metadata=persist_user_display_metadata, scheduled_heartbeat=scheduled_heartbeat,
+            persist_user_display_metadata=persist_user_display_metadata,
+            message_type=message_type,
+            scheduled_heartbeat=scheduled_heartbeat,
             voice_turn=str(getattr(message_type, "value", message_type) or "").lower() == "voice",
         )
         _status_thread_metadata = self._run_agent_bind_turn_wiring(

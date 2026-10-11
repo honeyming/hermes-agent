@@ -54,6 +54,9 @@ class TurnContext:
     event_message_id: Optional[str] = None
     # Raw inbound platform id (not the event_message_id reply anchor); stamped on the user turn.
     inbound_message_id: Optional[str] = None
+    # Inbound message kind (e.g. MessageType.VOICE) — set when the turn was triggered by a voice
+    # message so the reasoning layer can pick a lighter effort.
+    message_type: Optional[Any] = None
     moa_config: Optional[dict] = None
     title_user_message: Optional[str] = None
     persist_user_message: Optional[Any] = None

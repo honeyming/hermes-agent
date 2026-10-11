@@ -41,6 +41,40 @@ declare global {
         profile?: string | null,
         opts?: { priority?: 'foreground' | 'background' }
       ) => Promise<HermesConnection>
+      // Editable cyber-girlfriend phrase library (userData avatar-lines.json).
+      getAvatarLines?: () => Promise<{
+        path: string
+        lines: {
+          head: string[]
+          shoulder: string[]
+          belly: string[]
+          legs: string[]
+          greetings?: Record<string, string[]>
+          loverLines?: Record<string, string[]>
+          idle?: string[]
+          complete?: string[]
+          unread?: string[]
+          weekend?: string[]
+          clingy?: boolean
+        }
+      } | null>
+      // User-replaceable avatar assets (userData avatar.webp etc.).
+      getAvatarAssets?: () => Promise<{
+        'avatar.webp': string
+        'avatar-slow.webp': string
+        'avatar-still.png': string
+      } | null>
+      // Editable cyber-girlfriend persona (userData avatar-persona.md).
+      getAvatarPersona?: () => Promise<{ path: string; text: string } | null>
+      // Current avatar image as a base64 data URL (for MiniMax selfies).
+      getAvatarImage?: () => Promise<{ dataUrl: string } | null>
+      // Currently-playing media (Windows SMTC), for media-aware proactive lines.
+      getNowPlaying?: () => Promise<{
+        title: string
+        artist: string
+        app: string
+        status: string
+      } | null>
       // Registry-scoped backend resolution: dial (connectionId, profile). An
       // empty/local connectionId delegates to the legacy getConnection path.
       getConnectionFor?: (payload: {
@@ -147,6 +181,7 @@ declare global {
         control: (payload: PetOverlayControl) => void
         onState: (callback: (payload: PetOverlayStatePayload) => void) => () => void
         onControl: (callback: (payload: PetOverlayControl) => void) => () => void
+        onCursor: (callback: (point: { x: number; y: number }) => void) => () => void
       }
       // HUD mode: the chrome-free floating chat. A FULL app renderer with its
       // own gateway (like an instance window), sized and skinned as a floating

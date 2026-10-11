@@ -2,6 +2,7 @@ import { atom } from 'nanostores'
 
 import { PRIMARY_SESSION_VIEW } from '@/app/chat/session-view'
 import { persistBoolean, persistString, storedBoolean, storedString } from '@/lib/storage'
+import { $avatarEnabled, $avatarMouthLevel, AVATAR_WINDOW_H, AVATAR_WINDOW_W } from '@/store/avatar'
 import { $petActivity, $petInfo, $petUnread, clearPetUnread, type PetActivity, type PetInfo } from '@/store/pet'
 import { $petPluginMessages, type PetPluginMessage } from '@/store/pet-plugin-messages'
 
@@ -51,6 +52,9 @@ export interface PetOverlayStatePayload {
   reaction: PetReaction | null
   /** Live plugin bubble lines (`ctx.pet.say`); this renderer owns their expiry. */
   pluginMessages?: PetPluginMessage[]
+  avatarEnabled: boolean
+  /** Live voice-energy (0..1) so the overlay's jaw tracks the same audio. */
+  mouthLevel: number
 }
 
 export type PetOverlayControl =
@@ -151,7 +155,9 @@ function currentPayload(): PetOverlayStatePayload {
     awaiting: PRIMARY_SESSION_VIEW.$awaitingResponse.get(),
     unread: $petUnread.get(),
     reaction: $petReaction.get(),
-    pluginMessages: $petPluginMessages.get()
+    pluginMessages: $petPluginMessages.get(),
+    avatarEnabled: $avatarEnabled.get(),
+    mouthLevel: $avatarMouthLevel.get()
   }
 }
 
@@ -189,7 +195,9 @@ function openOverlay(request: PetOverlayOpenRequest): void {
     PRIMARY_SESSION_VIEW.$awaitingResponse.subscribe(pushNow),
     $petUnread.subscribe(pushNow),
     $petReaction.subscribe(pushNow),
-    $petPluginMessages.subscribe(pushNow)
+    $petPluginMessages.subscribe(pushNow),
+    $avatarEnabled.subscribe(pushNow),
+    $avatarMouthLevel.subscribe(pushNow)
   ]
 }
 
@@ -308,4 +316,41 @@ export function initPetOverlayBridge(): () => void {
     controlUnsub?.()
     controlUnsub = null
   }
+}
+
+/** Window size for the standalone avatar panel (nous-girl portrait). */
+export function avatarOverlayWindowSize(): { width: number; height: number } {
+  return { width: AVATAR_WINDOW_W, height: AVATAR_WINDOW_H }
+}
+
+/**
+ * Open the overlay in avatar mode. The avatar is Hermes-native (local image,
+ * no gateway) and shares the pet mascot's always-on-top window, so only one
+ * overlay is ever open at a time. Opt-in — callers (Settings toggle, boot
+ * effect in floating-pet) check $avatarEnabled first.
+ */
+export function openAvatarOverlay(): void {
+  const api = window.hermesDesktop?.petOverlay
+  const avatarEnabled = $avatarEnabled.get()
+  const alreadyOpen = stateUnsubs.length > 0
+
+  if (!api || alreadyOpen || !avatarEnabled) {
+    return
+  }
+
+  const saved = loadSavedBounds()
+
+  if (saved) {
+    openOverlay({ bounds: saved, screen: true })
+
+    return
+  }
+
+  const { width, height } = avatarOverlayWindowSize()
+  const screenW = window.screen.availWidth
+  const screenH = window.screen.availHeight
+  const x = Math.max(0, screenW - width - 48)
+  const y = Math.max(0, screenH - height - 120)
+
+  openOverlay({ bounds: { height, width, x, y }, screen: true })
 }

@@ -554,3 +554,119 @@ class XAIStreamer(StreamingTTSProvider):
                         envelope.get("message") or envelope.get("error") or envelope
                     )
                     raise RuntimeError(f"xAI streaming TTS error: {detail}")
+from hermes_cli.config import get_env_value
+
+@register("doubao")
+class DoubaoStreamer(StreamingTTSProvider):
+    """Doubao Seed-TTS 2.0 bidirectional streaming synthesizer.
+
+    Yields raw 24 kHz int16 mono PCM per sentence so the reply audio is produced
+    as the LLM streams (overlapped) instead of a single whole-file call after the
+    text finishes. Same ``wss://.../tts/bidirection`` endpoint + voice as the daemon.
+    """
+    sample_rate = 24000
+    channels = 1
+    sample_width = 2
+
+    @staticmethod
+    def available() -> bool:
+        return bool(get_env_value("DOUBAO_TTS_TOKEN") or "")
+
+    def stream(self, text: str) -> Iterator[bytes]:
+        import json
+        import os
+        import uuid
+        from websockets.sync.client import connect
+        from tools.doubao_protocols import EventType, Message, MsgType, MsgTypeFlagBits
+
+        api_key = (get_env_value("DOUBAO_TTS_TOKEN") or "").strip()
+        if not api_key:
+            raise RuntimeError("DOUBAO_TTS_TOKEN not set")
+
+        def frame(event: int, payload: bytes = b"{}", session_id: str = "") -> bytes:
+            return Message(
+                type=MsgType.FullClientRequest,
+                flag=MsgTypeFlagBits.WithEvent,
+                event=event,
+                session_id=session_id,
+                payload=payload,
+            ).marshal()
+
+        def wait_event(ws, event_type: int, timeout: float = 30.0) -> None:
+            deadline = time.monotonic() + timeout
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise RuntimeError(f"Doubao streaming TTS timeout waiting for {event_type}")
+                msg = Message.from_bytes(ws.recv(timeout=remaining))
+                if msg.type == MsgType.Error:
+                    raise RuntimeError(
+                        "Doubao streaming TTS error: code=%s %s" % (
+                            msg.error_code, (msg.payload or b"").decode("utf-8", "ignore")[:200]))
+                if msg.type == MsgType.FullServerResponse and msg.event == event_type:
+                    return
+
+        url = os.environ.get("DOUBAO_TTS_URL", "wss://openspeech.bytedance.com/api/v3/tts/bidirection")
+        resource_id = os.environ.get("DOUBAO_TTS_RESOURCE_ID", "seed-tts-2.0")
+        speaker = (
+            self.section.get("voice")
+            or self.tts_config.get("providers", {}).get("doubao", {}).get("voice")
+            or "zh_female_vv_uranus_bigtts"
+        ).strip()
+
+        request_id = str(uuid.uuid4())
+        headers = {
+            "X-Api-Key": api_key,
+            "X-Api-Resource-Id": resource_id,
+            "X-Api-Request-Id": request_id,
+            "X-Api-Connect-Id": str(uuid.uuid4()),
+            "X-Control-Require-Usage-Tokens-Return": "*",
+        }
+        with connect(url, additional_headers=headers, max_size=20 * 1024 * 1024) as ws:
+            ws.send(frame(EventType.StartConnection))
+            wait_event(ws, EventType.ConnectionStarted)
+            session_id = str(uuid.uuid4())
+            base = {
+                "user": {"uid": request_id},
+                "namespace": "BidirectionalTTS",
+                "req_params": {
+                    "speaker": speaker,
+                    "audio_params": {"format": "pcm", "sample_rate": self.sample_rate},
+                },
+            }
+            start_req = dict(base)
+            start_req["event"] = EventType.StartSession
+            ws.send(frame(EventType.StartSession, json.dumps(start_req, ensure_ascii=False).encode("utf-8"), session_id))
+            wait_event(ws, EventType.SessionStarted)
+
+            synth_req = dict(base)
+            synth_req["event"] = EventType.TaskRequest
+            synth_req["req_params"] = dict(synth_req["req_params"], text=text)
+            ws.send(frame(EventType.TaskRequest, json.dumps(synth_req, ensure_ascii=False).encode("utf-8"), session_id))
+            try:
+                ws.send(frame(EventType.FinishSession, b"{}", session_id))
+            except Exception:
+                pass
+
+            while True:
+                try:
+                    data = ws.recv(timeout=30.0)
+                except TimeoutError:
+                    return
+                if isinstance(data, str):
+                    continue
+                msg = Message.from_bytes(data)
+                if msg.type == MsgType.Error:
+                    raise RuntimeError(
+                        "Doubao streaming TTS error: code=%s %s" % (
+                            msg.error_code, (msg.payload or b"").decode("utf-8", "ignore")[:200]))
+                if msg.type == MsgType.FullServerResponse:
+                    if msg.event in (EventType.TTSEnded, EventType.SessionFinished):
+                        break
+                elif msg.type == MsgType.AudioOnlyServer:
+                    if msg.payload:
+                        yield msg.payload
+            try:
+                ws.send(frame(EventType.FinishConnection))
+            except Exception:
+                pass

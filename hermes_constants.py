@@ -1109,8 +1109,12 @@ def resolve_per_model_provider_routing(model: str, models: dict | None) -> dict:
     return {}
 
 
-def resolve_reasoning_config(cfg: dict | None, model: str = "") -> dict | None:
-    """Effective reasoning config for *model*: per-model override, then global ``agent.reasoning_effort``.
+def resolve_reasoning_config(cfg: dict | None, model: str = "", is_voice: bool = False) -> dict | None:
+    """Effective reasoning config for *model*: per-model override, then ``agent.reasoning_effort``.
+
+    When ``is_voice`` is True, ``voice.reasoning_effort`` (if set) takes precedence over the global
+    ``agent.reasoning_effort`` so voice turns can run with lighter reasoning to cut latency. The
+    per-model ``reasoning_overrides`` still win for either surface.
 
     Single chokepoint for every surface (CLI, gateway, TUI, cron, ``/model``, fallback activation).
     """
@@ -1125,6 +1129,21 @@ def resolve_reasoning_config(cfg: dict | None, model: str = "") -> dict | None:
     per_model = resolve_per_model_reasoning_effort(model, agent_cfg.get("reasoning_overrides") or {})
     if per_model is not None:
         return per_model
+
+    # Voice turns prefer ``voice.reasoning_effort`` over the global default. Per-model overrides
+    # above already short-circuited, so this only affects the global fallback layer.
+    if is_voice:
+        voice_cfg = cfg.get("voice") if isinstance(cfg.get("voice"), dict) else {}
+        voice_effort = voice_cfg.get("reasoning_effort", None)
+        if voice_effort is not None:
+            voice_result = parse_reasoning_effort(voice_effort)
+            if voice_result is not None:
+                return voice_result
+            # Voice key set but unparseable: warn and fall through to global.
+            import logging
+            logging.getLogger(__name__).warning(
+                "Unknown voice.reasoning_effort '%s', falling back to agent.reasoning_effort", voice_effort
+            )
 
     # Keep the raw value: ``or ""`` would turn a YAML False into "" and silently re-enable thinking.
     effort = agent_cfg.get("reasoning_effort", "")

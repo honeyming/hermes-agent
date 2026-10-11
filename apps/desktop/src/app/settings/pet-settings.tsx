@@ -13,11 +13,13 @@ import { Slider } from '@/components/ui/slider'
 import { Tip } from '@/components/ui/tooltip'
 import { useI18n } from '@/i18n'
 import { triggerHaptic } from '@/lib/haptics'
-import { Download, Loader2, PawPrint, Pencil, Trash2 } from '@/lib/icons'
+import { Download, Loader2, PawPrint, Pencil, SmilePlusIcon, Trash2 } from '@/lib/icons'
 import { isSubmitEnter } from '@/lib/ime'
 import { selectableCardClass } from '@/lib/selectable-card'
 import { cn } from '@/lib/utils'
+import { $avatarEnabled, setAvatarEnabled } from '@/store/avatar'
 import { $petInfo, $petRoam, setPetRoam } from '@/store/pet'
+import { openAvatarOverlay, popInPet } from '@/store/pet-overlay'
 import {
   $petBusy,
   $petGallery,
@@ -342,6 +344,43 @@ export function PetSettings() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
+  )
+}
+
+/**
+ * Appearance opt-in for the always-on-top virtual companion (avatar.png cutout).
+ * Turning it off closes the overlay window; turning it on reopens it. The flag
+ * is persisted, so a disabled companion stays hidden on the next boot (default
+ * is off — the user opts in).
+ */
+export function AvatarSettings() {
+  const { t } = useI18n()
+  const copy = t.settings.appearance.avatar
+  const avatarEnabled = useStore($avatarEnabled)
+
+  const onToggle = (on: boolean) => {
+    setAvatarEnabled(on)
+    triggerHaptic('crisp')
+
+    if (on) {
+      openAvatarOverlay()
+    } else {
+      popInPet()
+    }
+  }
+
+  return (
+    <div>
+      <SectionHeading icon={SmilePlusIcon} title={copy.title} />
+      <div className="mt-2">
+        <ToggleRow
+          checked={avatarEnabled}
+          description={copy.intro}
+          label={copy.title}
+          onChange={onToggle}
+        />
+      </div>
     </div>
   )
 }

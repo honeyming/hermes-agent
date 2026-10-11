@@ -15,7 +15,7 @@ import logging
 from typing import Any, Optional
 
 from agent.i18n import t
-from gateway.platforms.event import MessageEvent
+from gateway.platforms.event import MessageEvent, MessageType
 from hermes_cli.config import atomic_config_write
 from utils import base_url_host_matches
 
@@ -749,8 +749,11 @@ class GatewayModelCommandsMixin:
         _session_model = str(
             ((getattr(self, "_session_model_overrides", {}) or {}).get(session_key) or {}).get("model") or ""
         )
+        # Voice turns route through ``voice.reasoning_effort`` (lighter, lower latency) so the
+        # /reasoning picker reflects the active config a voice turn will actually use.
+        _is_voice_turn = getattr(event, "message_type", None) == MessageType.VOICE
         self._reasoning_config = self._resolve_session_reasoning_config(
-            source=event.source, session_key=session_key, model=_session_model,
+            source=event.source, session_key=session_key, model=_session_model, is_voice=_is_voice_turn,
         )
         platform_key = _platform_config_key(event.source.platform)
         if raw_args:  # typed path — same applier the picker uses

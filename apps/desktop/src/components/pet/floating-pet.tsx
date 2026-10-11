@@ -22,7 +22,8 @@ import {
   setPetInfo
 } from '@/store/pet'
 import { resetPetGallery, setPetScale } from '@/store/pet-gallery'
-import { $petOverlayActive, initPetOverlayBridge, popOutPet, restorePetOverlay } from '@/store/pet-overlay'
+import { $avatarEnabled } from '@/store/avatar'
+import { $petOverlayActive, initPetOverlayBridge, openAvatarOverlay, popOutPet, restorePetOverlay } from '@/store/pet-overlay'
 import { $gatewayState } from '@/store/session'
 import { isSecondaryWindow } from '@/store/windows'
 import { useTheme } from '@/themes/context'
@@ -313,6 +314,23 @@ export function FloatingPet() {
     restoredRef.current = true
     restorePetOverlay()
   }, [active])
+
+  // Open the standalone avatar panel on boot when the companion is enabled.
+  // Opt-in (default off); the overlay window renders AvatarRenderer vs the
+  // mascot based on the avatarEnabled flag pushed in its state payload.
+  const avatarOpenedRef = useRef(false)
+  // eslint-disable-next-line no-restricted-syntax -- legitimate non-atom ref write (see eslint rule comment)
+  useEffect(() => {
+    if (isSecondaryWindow() || avatarOpenedRef.current) {
+      return
+    }
+
+    avatarOpenedRef.current = true
+
+    if ($avatarEnabled.get()) {
+      openAvatarOverlay()
+    }
+  }, [])
 
   // Never strand or crop the pet: re-clamp (and persist) whenever the viewport
   // shrinks or the pet's own size changes (wheel/slider). `clamp` carries the

@@ -618,6 +618,32 @@ export async function startSpeechStream(options: VoicePlaybackOptions): Promise<
   return session
 }
 
+/**
+ * Streaming local speech for the realtime dialogue path (pause confirmations,
+ * paused-reading resume). Uses the same speak-stream WebSocket as normal
+ * replies but intentionally leaves $voicePlayback untouched, so the composer's
+ * "preparing / speaking" pill never flashes during a realtime conversation.
+ */
+export async function playLocalSpeechStreaming(text: string): Promise<boolean> {
+  const speakable = sanitizeTextForSpeech(text)
+
+  if (!speakable) {
+    return false
+  }
+
+  const wsUrl = await resolveSpeakStreamUrl()
+
+  if (!wsUrl) {
+    return false
+  }
+
+  const session = openSpeechStream(wsUrl, { source: 'voice-conversation' })
+  session.append(speakable)
+  session.finish()
+
+  return session.done.then(outcome => outcome === 'done')
+}
+
 /** One-shot playback of complete text over the streaming WS. */
 function playSpeechStream(wsUrl: string, text: string, options: VoicePlaybackOptions): Promise<'fallback' | 'played'> {
   const session = openSpeechStream(wsUrl, options)

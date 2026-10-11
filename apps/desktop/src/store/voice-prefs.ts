@@ -1,5 +1,6 @@
 import { atom } from 'nanostores'
 
+import { getHermesConfigRecord, saveHermesConfig } from '@/hermes'
 import { persistBoolean, readKey, storedBoolean } from '@/lib/storage'
 
 // Desktop read-aloud is local; voice.auto_tts belongs to the messaging gateway.
@@ -161,4 +162,43 @@ export async function setAutoSpeakReplies(enabled: boolean): Promise<void> {
   autoSpeakChosen = true
   persistBoolean(AUTO_SPEAK_KEY, enabled)
   $autoSpeakReplies.set(enabled)
+}
+
+// Full-duplex realtime dialogue — mirrors the canonical `voice.realtime_dialogue`
+// config key so the composer picks the streaming dialogue path automatically.
+export const $realtimeDialogue = atom<boolean>(false)
+
+/** Seed the realtime-dialogue atom from a loaded config payload (mount / refresh). */
+export function applyRealtimeDialogueFromConfig(
+  config: { voice?: unknown } | null | undefined
+) {
+  const voice =
+    config?.voice && typeof config.voice === 'object'
+      ? (config.voice as Record<string, unknown>)
+      : undefined
+  $realtimeDialogue.set(voice?.realtime_dialogue === true)
+}
+
+/**
+ * Flip the preference and persist it. Optimistic — the atom updates instantly and
+ * reverts if the config write fails.
+ */
+export async function setRealtimeDialogue(enabled: boolean): Promise<void> {
+  const previous = $realtimeDialogue.get()
+
+  if (previous === enabled) {
+    return
+  }
+
+  $realtimeDialogue.set(enabled)
+
+  try {
+    const record = await getHermesConfigRecord()
+    const voice = record.voice && typeof record.voice === 'object' ? (record.voice as Record<string, unknown>) : {}
+
+    await saveHermesConfig({ ...record, voice: { ...voice, realtime_dialogue: enabled } })
+  } catch (error) {
+    $realtimeDialogue.set(previous)
+    throw error
+  }
 }

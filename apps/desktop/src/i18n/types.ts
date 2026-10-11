@@ -918,6 +918,10 @@ export interface Translations extends NoticeTranslations {
         turnOnFailed: string
         turnOffFailed: string
       }
+      avatar: {
+        title: string
+        intro: string
+      }
     }
     fieldLabels: Record<string, string>
     fieldDescriptions: Record<string, string>

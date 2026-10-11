@@ -5215,6 +5215,501 @@ class TelegramAdapter(TelegramHeldInboundMixin, BasePlatformAdapter):
                 with contextlib.suppress(OSError):
                     os.unlink(_transcoded_voice_path)
 
+    # ---- Doubao streaming-TTS sink (realtime voice parity) -------------------
+    def supports_streaming_tts(self, chat_id: str, audio_format: "AudioFormat") -> bool:
+        """Telegram accepts a streamed TTS session: the consumer accumulates PCM
+        here and we send one native Ogg/Opus voice bubble when the reply finishes."""
+        return True
+
+    async def begin_streaming_tts(
+        self, chat_id: str, audio_format: "AudioFormat", metadata: Optional[Dict[str, Any]] = None,
+    ) -> "StreamingTTSHandle":
+        from gateway.platforms.base import StreamingTTSHandle
+        handle = StreamingTTSHandle(chat_id=str(chat_id), audio_format=audio_format)
+        handle.metadata = metadata or {}
+        handle.pcm = bytearray()
+        handle.temp_pcm = None
+        handle.temp_ogg = None
+        handle.ffmpeg = None
+        # Encode-as-you-receive: pipe the incoming PCM straight into ffmpeg's stdin so
+        # the Ogg container is (almost) final the moment the last PCM chunk arrives.
+        try:
+            import shutil
+            import subprocess
+            import tempfile
+            ffmpeg = shutil.which("ffmpeg")
+            if ffmpeg:
+                af = handle.audio_format
+                fd, ogg_path = tempfile.mkstemp(prefix="tg_stream_", suffix=".ogg")
+                os.close(fd)
+                handle.temp_ogg = ogg_path
+                handle.ffmpeg = subprocess.Popen(
+                    [ffmpeg, "-v", "error", "-y", "-f", "s16le", "-ar", str(af.sample_rate),
+                     "-ac", str(af.channels), "-i", "pipe:0",
+                     "-c:a", "libopus", "-b:a", "64k", "-application", "voip",
+                     "-vbr", "on", ogg_path],
+                    stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        except Exception:
+            handle.ffmpeg = None
+            if handle.temp_ogg and os.path.exists(handle.temp_ogg):
+                with contextlib.suppress(OSError):
+                    os.unlink(handle.temp_ogg)
+            handle.temp_ogg = None
+        return handle
+
+    async def write_streaming_tts(self, handle: "StreamingTTSHandle", chunk: bytes) -> None:
+        if getattr(handle, "aborted", False):
+            return
+        handle.audible = True
+        proc = getattr(handle, "ffmpeg", None)
+        if proc is not None and proc.poll() is None and proc.stdin is not None:
+            # Fast streams are short; blocking the loop for a single small write is fine.
+            # A blocked stream (huge reply) falls back to accumulated PCM on the next chunk.
+            try:
+                proc.stdin.write(chunk)
+                proc.stdin.flush()
+            except Exception:
+                with contextlib.suppress(OSError):
+                    handle.temp_ogg and os.path.exists(handle.temp_ogg) and os.unlink(handle.temp_ogg)
+                handle.temp_ogg = None
+                handle.ffmpeg = None
+                handle.pcm.extend(chunk)
+            return
+        handle.pcm.extend(chunk)
+
+    async def finish_streaming_tts(self, handle: "StreamingTTSHandle", *, interrupted: bool = False) -> None:
+        if interrupted or getattr(handle, "aborted", False):
+            await self._kill_stream_ffmpeg(handle)
+            return
+        proc = getattr(handle, "ffmpeg", None)
+        if proc is not None and proc.poll() is None and proc.stdin is not None:
+            try:
+                proc.stdin.close()
+                await asyncio.to_thread(proc.wait, 12)
+            except Exception:
+                await self._kill_stream_ffmpeg(handle)
+                return
+            if (proc.returncode == 0 and getattr(handle, "temp_ogg", None)
+                    and os.path.exists(handle.temp_ogg) and os.path.getsize(handle.temp_ogg) > 0):
+                ogg_path = handle.temp_ogg
+                try:
+                    await self.send_voice(handle.chat_id, ogg_path, metadata=handle.metadata)
+                finally:
+                    with contextlib.suppress(OSError):
+                        os.unlink(ogg_path)
+                    handle.temp_ogg = None
+                return
+            await self._kill_stream_ffmpeg(handle)
+            return
+        # ffmpeg unavailable / was already closed -> accumulate and encode once.
+        if not getattr(handle, "audible", False) or not getattr(handle, "pcm", None):
+            return
+        ogg_path = await asyncio.to_thread(self._stream_pcm_to_ogg, handle)
+        if not ogg_path:
+            return
+        try:
+            await self.send_voice(handle.chat_id, ogg_path, metadata=handle.metadata)
+        finally:
+            with contextlib.suppress(OSError):
+                os.unlink(ogg_path)
+
+    async def abort_streaming_tts(self, handle: "StreamingTTSHandle", error: Optional[str] = None) -> None:
+        handle.aborted = True
+        await self._kill_stream_ffmpeg(handle)
+
+    async def _kill_stream_ffmpeg(self, handle: "StreamingTTSHandle") -> None:
+        proc = getattr(handle, "ffmpeg", None)
+        if proc is not None:
+            try:
+                if proc.poll() is None:
+                    if proc.stdin is not None:
+                        with contextlib.suppress(Exception):
+                            proc.stdin.close()
+                    proc.kill()
+            except Exception:
+                pass
+            handle.ffmpeg = None
+        if getattr(handle, "temp_ogg", None) and os.path.exists(handle.temp_ogg):
+            with contextlib.suppress(OSError):
+                os.unlink(handle.temp_ogg)
+            handle.temp_ogg = None
+
+    @staticmethod
+    def _stream_pcm_to_ogg(handle: "StreamingTTSHandle") -> Optional[str]:
+        import shutil
+        import subprocess
+        import tempfile
+        ffmpeg = shutil.which("ffmpeg")
+        if not ffmpeg:
+            logger.warning("[Telegram] ffmpeg unavailable for streaming TTS")
+            return None
+        af = handle.audio_format
+        fd, pcm_path = tempfile.mkstemp(prefix="tg_stream_", suffix=".pcm")
+        os.close(fd)
+        handle.temp_pcm = pcm_path
+        with open(pcm_path, "wb") as fh:
+            fh.write(bytes(handle.pcm))
+        fd2, ogg_path = tempfile.mkstemp(prefix="tg_stream_", suffix=".ogg")
+        os.close(fd2)
+        handle.temp_ogg = ogg_path
+        try:
+            res = subprocess.run(
+                [ffmpeg, "-v", "error", "-y", "-f", "s16le", "-ar", str(af.sample_rate),
+                 "-ac", str(af.channels), "-i", pcm_path,
+                 "-c:a", "libopus", "-b:a", "64k", "-application", "voip", "-vbr", "on", ogg_path],
+                capture_output=True, timeout=60, stdin=subprocess.DEVNULL)
+            if res.returncode != 0 or os.path.getsize(ogg_path) == 0:
+                logger.warning("[Telegram] streaming TTS opus encode failed: %s", res.stderr[-300:])
+                with contextlib.suppress(OSError):
+                    os.unlink(ogg_path)
+                handle.temp_ogg = None
+                return None
+            return ogg_path
+        except Exception as exc:
+            logger.warning("[Telegram] streaming TTS opus encode error: %s", exc, exc_info=True)
+            with contextlib.suppress(OSError):
+                os.unlink(ogg_path)
+            handle.temp_ogg = None
+            return None
+        finally:
+            if handle.temp_pcm and os.path.exists(handle.temp_pcm):
+                with contextlib.suppress(OSError):
+                    os.unlink(handle.temp_pcm)
+                handle.temp_pcm = None
+
+    # ---- Doubao speech-to-speech fusion for Telegram voice notes (persona-driven) ----
+    async def _maybe_run_doubao_dialogue(self, event: "MessageEvent") -> bool:
+        """Route a cached voice note through ``DoubaoDialogueSession`` (Doubao's own LLM with the
+        configured persona / style) and send the reply as a native voice bubble. Returns True when
+        handled so the caller skips the Hermes agent; any failure falls back to the agent path."""
+        from hermes_cli.config import load_config
+        try:
+            cfg = load_config() or {}
+        except Exception:
+            return False
+        voice_cfg = cfg.get("voice") or {}
+        if not voice_cfg.get("fast_telegram_dialogue"):
+            return False
+        if getattr(event, "message_type", None) != MessageType.VOICE:
+            return False
+        if not self._should_auto_tts_for_chat(event.source.chat_id):
+            return False
+        audio_path = (getattr(event, "media_urls", None) or [None])[0]
+        if not audio_path or not os.path.exists(audio_path):
+            return False
+        try:
+            turn_started = time.perf_counter()
+            bitrate = str(voice_cfg.get("telegram_voice_bitrate") or "32k").strip()
+            if not re.fullmatch(r"\d{2,3}k", bitrate):
+                bitrate = "32k"
+            encoder_proc = None
+            encoder_path = None
+            try:
+                encoder_proc, encoder_path = self._start_pcm24_ogg_encoder(bitrate)
+            except Exception:
+                encoder_proc = None
+                encoder_path = None
+
+            def _write_encoded(payload: bytes) -> None:
+                if encoder_proc is not None and encoder_proc.poll() is None:
+                    encoder_proc.stdin.write(payload)
+
+            reply_pcm, reply_text = await asyncio.to_thread(
+                self._run_doubao_dialogue_turn,
+                audio_path,
+                voice_cfg,
+                _write_encoded,
+            )
+            if not reply_pcm:
+                return False
+            dialogue_seconds = time.perf_counter() - turn_started
+            encode_started = time.perf_counter()
+            ogg_path = None
+            if encoder_proc is not None and encoder_path:
+                try:
+                    encoder_proc.stdin.close()
+                    await asyncio.to_thread(encoder_proc.wait, 12)
+                    if encoder_proc.returncode == 0 and os.path.getsize(encoder_path) > 0:
+                        ogg_path = encoder_path
+                        encoder_path = None
+                except Exception:
+                    with contextlib.suppress(Exception):
+                        encoder_proc.kill()
+            if not ogg_path:
+                ogg_path = await asyncio.to_thread(
+                    self._encode_pcm24_to_ogg, reply_pcm, bitrate
+                )
+            if not ogg_path:
+                return False
+            encode_seconds = time.perf_counter() - encode_started
+            upload_started = time.perf_counter()
+            try:
+                await self.send_voice(
+                    chat_id=event.source.chat_id, audio_path=ogg_path, metadata={"notify": True})
+            finally:
+                with contextlib.suppress(OSError):
+                    os.unlink(ogg_path)
+            upload_seconds = time.perf_counter() - upload_started
+            logger.info(
+                "[Telegram] Doubao dialogue voice reply sent in %.2fs "
+                "(dialogue=%.2fs encode=%.2fs upload=%.2fs audio=%.1fs text=%r)",
+                dialogue_seconds + encode_seconds + upload_seconds,
+                dialogue_seconds,
+                encode_seconds,
+                upload_seconds,
+                len(reply_pcm) / (24000 * 2),
+                reply_text[:60],
+            )
+            return True
+        except Exception as exc:
+            logger.warning(
+                "[Telegram] Doubao dialogue failed; falling back to agent: %s", exc, exc_info=True)
+            return False
+        finally:
+            if encoder_proc is not None and encoder_proc.poll() is None:
+                with contextlib.suppress(Exception):
+                    encoder_proc.kill()
+            if encoder_path:
+                with contextlib.suppress(OSError):
+                    os.unlink(encoder_path)
+
+    def _start_pcm24_ogg_encoder(self, bitrate: str):
+        """Start an ffmpeg encoder whose stdin accepts 24 kHz int16 PCM chunks."""
+        import shutil
+        import subprocess
+        import tempfile
+
+        ffmpeg = shutil.which("ffmpeg")
+        if not ffmpeg:
+            return None, None
+        fd, ogg_path = tempfile.mkstemp(prefix="tg_doubao_stream_", suffix=".ogg")
+        os.close(fd)
+        proc = subprocess.Popen(
+            [
+                ffmpeg,
+                "-v",
+                "error",
+                "-y",
+                "-f",
+                "s16le",
+                "-ar",
+                "24000",
+                "-ac",
+                "1",
+                "-i",
+                "pipe:0",
+                "-c:a",
+                "libopus",
+                "-b:a",
+                bitrate,
+                "-application",
+                "voip",
+                "-vbr",
+                "on",
+                ogg_path,
+            ],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+        )
+        return proc, ogg_path
+
+    def _run_doubao_dialogue_turn(
+        self, audio_path: str, voice_cfg: dict, on_audio=None
+    ):
+        """Decode the cached voice note to 16 kHz PCM and run one Doubao dialogue turn.
+        Returns (reply_pcm24_bytes, reply_text)."""
+        import shutil
+        import subprocess
+        from tools.doubao_dialogue import DoubaoDialogueSession
+        from hermes_cli.config import get_env_value
+
+        ffmpeg = shutil.which("ffmpeg")
+        if not ffmpeg:
+            raise RuntimeError("ffmpeg unavailable to decode voice")
+        api_key = (get_env_value("DOUBAO_TTS_TOKEN") or "").strip()
+        if not api_key:
+            raise RuntimeError("DOUBAO_TTS_TOKEN not set")
+        system_prompt = self._resolve_doubao_dialogue_prompt(voice_cfg)
+        bot_name = str(voice_cfg.get("realtime_dialogue_bot_name") or "").strip()
+        speaking_style = str(
+            voice_cfg.get("telegram_dialogue_speaking_style")
+            or voice_cfg.get("realtime_dialogue_speaking_style")
+            or ""
+        ).strip()
+        try:
+            max_tokens = int(voice_cfg.get("telegram_dialogue_max_tokens") or 64)
+        except (TypeError, ValueError):
+            max_tokens = 64
+        max_tokens = max(32, min(max_tokens, 256))
+        try:
+            speech_rate = int(voice_cfg.get("telegram_dialogue_speech_rate") or 20)
+        except (TypeError, ValueError):
+            speech_rate = 20
+        speech_rate = max(-50, min(speech_rate, 100))
+        dialog_context = [
+            {
+                "role": "user",
+                "text": "之后请只回一句完整的话，尽量简短，不要补充建议，不要反问。",
+            },
+            {"role": "assistant", "text": "好。"},
+        ]
+        detail = {}
+        turn_started = time.perf_counter()
+        session = DoubaoDialogueSession(
+            api_key=api_key, mode="half_duplex", system_prompt=system_prompt,
+            bot_name=bot_name, speaking_style=speaking_style, max_tokens=max_tokens,
+            speech_rate=speech_rate, dialog_context=dialog_context,
+            timeout=10,
+        )
+        import threading
+
+        start_error = []
+
+        def _start_session() -> None:
+            try:
+                session.start()
+            except Exception as exc:  # noqa: BLE001
+                start_error.append(exc)
+
+        start_thread = threading.Thread(
+            target=_start_session, name="tg-doubao-start", daemon=True
+        )
+        start_thread.start()
+        try:
+            decode_started = time.perf_counter()
+            dec = subprocess.run(
+                [
+                    ffmpeg,
+                    "-v",
+                    "error",
+                    "-i",
+                    audio_path,
+                    "-f",
+                    "s16le",
+                    "-ar",
+                    "16000",
+                    "-ac",
+                    "1",
+                    "-",
+                ],
+                capture_output=True,
+                timeout=60,
+            )
+            detail["decode_ms"] = round(
+                (time.perf_counter() - decode_started) * 1000
+            )
+            if dec.returncode != 0 or not dec.stdout:
+                raise RuntimeError("voice decode failed: %s" % dec.stderr[-200:])
+            pcm = dec.stdout
+            start_thread.join(timeout=10)
+            if start_error:
+                raise start_error[0]
+            detail["session_start_ms"] = round(
+                (time.perf_counter() - turn_started) * 1000
+            )
+            for i in range(0, len(pcm), 6400):
+                session.send_audio(pcm[i:i + 6400])
+            session.end_input()
+            pcm24 = bytearray()
+            texts = []
+            for ev in session.iter_events():
+                etype = ev.get("type")
+                if etype == "asr" and ev.get("final") and "first_asr_ms" not in detail:
+                    detail["first_asr_ms"] = round(
+                        (time.perf_counter() - turn_started) * 1000
+                    )
+                if etype == "audio":
+                    payload = ev.get("payload") or b""
+                    if payload and "first_audio_ms" not in detail:
+                        detail["first_audio_ms"] = round(
+                            (time.perf_counter() - turn_started) * 1000
+                        )
+                    pcm24.extend(payload)
+                    if on_audio is not None and payload:
+                        on_audio(payload)
+                elif etype == "chat":
+                    text = ev.get("text") or ""
+                    if text and "first_chat_ms" not in detail:
+                        detail["first_chat_ms"] = round(
+                            (time.perf_counter() - turn_started) * 1000
+                        )
+                    texts.append(text)
+                if etype in ("tts_ended", "session_finished"):
+                    detail["tts_end_ms"] = round(
+                        (time.perf_counter() - turn_started) * 1000
+                    )
+                    break
+        finally:
+            # Do not block the reply path on WebSocket teardown.
+            def _close_session() -> None:
+                with contextlib.suppress(Exception):
+                    session.close()
+
+            threading.Thread(
+                target=_close_session, name="tg-doubao-close", daemon=True
+            ).start()
+        logger.info(
+            "[Telegram] Doubao dialogue detail decode=%sms session=%sms "
+            "first_asr=%sms first_chat=%sms first_audio=%sms tts_end=%sms",
+            detail.get("decode_ms"),
+            detail.get("session_start_ms"),
+            detail.get("first_asr_ms"),
+            detail.get("first_chat_ms"),
+            detail.get("first_audio_ms"),
+            detail.get("tts_end_ms"),
+        )
+        return bytes(pcm24), "".join(texts).strip()
+
+    @staticmethod
+    def _encode_pcm24_to_ogg(reply_pcm: bytes, bitrate: str = "32k") -> Optional[str]:
+        import shutil
+        import subprocess
+        import tempfile
+        ffmpeg = shutil.which("ffmpeg")
+        if not ffmpeg:
+            return None
+        fd, ogg_path = tempfile.mkstemp(prefix="tg_doubao_", suffix=".ogg")
+        os.close(fd)
+        try:
+            res = subprocess.run(
+                [ffmpeg, "-v", "error", "-y", "-f", "s16le", "-ar", "24000", "-ac", "1",
+                 "-i", "-", "-c:a", "libopus", "-b:a", bitrate, "-application", "voip",
+                 "-vbr", "on", ogg_path],
+                input=reply_pcm, capture_output=True, timeout=60)
+            if res.returncode != 0 or os.path.getsize(ogg_path) == 0:
+                with contextlib.suppress(OSError):
+                    os.unlink(ogg_path)
+                return None
+            return ogg_path
+        except Exception:
+            with contextlib.suppress(OSError):
+                os.unlink(ogg_path)
+            return None
+
+    @staticmethod
+    def _resolve_doubao_dialogue_prompt(voice_cfg: dict) -> str:
+        """Load the realtime persona file, mirroring the desktop realtime-dialogue route."""
+        persona_path = str(voice_cfg.get("realtime_dialogue_persona_path") or "").strip()
+        system_prompt = ""
+        if voice_cfg.get("realtime_dialogue_persona"):
+            if persona_path and os.path.exists(persona_path):
+                with open(persona_path, "r", encoding="utf-8") as fh:
+                    system_prompt = fh.read()
+        if voice_cfg.get("persona_mode") and not system_prompt:
+            try:
+                import sys as _sys
+                scripts = str(_Path.home() / ".hermes" / "scripts")
+                if scripts not in _sys.path:
+                    _sys.path.insert(0, scripts)
+                from assistant_store import AssistantStore
+                from persona_mode import build_system_prompt
+                facts = [item["content"] for item in AssistantStore().list_facts(10)]
+                system_prompt = build_system_prompt(facts=facts)
+            except Exception:
+                pass
+        return system_prompt
+
     async def send_multiple_images(
         self, chat_id: str, images: list[tuple], metadata: Optional[dict[str, Any]] = None, human_delay: float = 0.0) -> SendResult:
         """Send images as Telegram albums (``send_media_group``, 10 per chunk). Animated GIFs can't join a
@@ -6820,6 +7315,11 @@ class TelegramAdapter(TelegramHeldInboundMixin, BasePlatformAdapter):
         if msg.voice:
             if await self._cache_inbound_av(msg, event, msg.voice, "voice message", "voice", ".ogg", "audio/ogg"):
                 return
+            # Doubao speech-to-speech fusion: voice note -> persona-driven Doubao LLM -> reply voice note.
+            if await self._maybe_run_doubao_dialogue(event):
+                return
+            await self.handle_message(event)
+            return
         elif msg.audio:
             if await self._cache_inbound_av(msg, event, msg.audio, "audio file", "audio", ".mp3", "audio/mp3"):
                 return

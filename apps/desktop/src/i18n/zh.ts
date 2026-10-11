@@ -883,6 +883,10 @@ export const zhOverrides = {
         noneAvailable: '当前没有可开启的宠物。',
         turnOnFailed: '无法开启宠物。',
         turnOffFailed: '无法关闭宠物。'
+      },
+      avatar: {
+        title: '虚拟女友',
+        intro: '在桌面上显示常驻 2D 立绘伙伴：跟随鼠标、回应点击、支持语音对话。默认关闭，可随时回来开启。'
       }
     },
     fieldLabels: defineFieldCopy({

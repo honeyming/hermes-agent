@@ -2039,10 +2039,12 @@ def _reresolve_fallback_reasoning_config(agent) -> None:
     failure keeps the current reasoning_config rather than killing the swap."""
     try:
         # Re-resolve reasoning_config for the new fallback model (Closes #21256). Wrapped in try/except
-        # because a config load failure must not kill the swap.
+        # because a config load failure must not kill the swap. Voice turns keep using
+        # ``voice.reasoning_effort`` (lighter effort) across model fallbacks so latency stays low.
         from hermes_cli.config import load_config
         from hermes_constants import resolve_reasoning_config
-        agent.reasoning_config = resolve_reasoning_config(load_config() or {}, agent.model)
+        is_voice = bool(getattr(agent, "_is_voice_turn", False))
+        agent.reasoning_config = resolve_reasoning_config(load_config() or {}, agent.model, is_voice=is_voice)
         logger.info("Fallback %s: reasoning_config resolved: %s", agent.model, agent.reasoning_config)
     except Exception as _reasoning_err:
         logger.debug("Failed to resolve reasoning_config for fallback %s; keeping current: %s", agent.model, _reasoning_err)

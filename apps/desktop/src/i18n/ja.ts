@@ -746,6 +746,11 @@ export const jaOverrides = {
         noneAvailable: 'オンにできるペットがありません。',
         turnOnFailed: 'ペットをオンにできませんでした。',
         turnOffFailed: 'ペットをオフにできませんでした。'
+      },
+      avatar: {
+        title: 'バーチャルコンパニオン',
+        intro:
+          'デスクトップに常駐する 2D コンパニオンを表示します：カーソルを追い、クリックに応答し、音声会話に対応します。初期状態はオフで、ここでオンにできます。'
       }
     },
     fieldLabels: defineFieldCopy({

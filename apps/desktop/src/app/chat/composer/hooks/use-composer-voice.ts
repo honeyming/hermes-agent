@@ -20,7 +20,13 @@ import { recordFeatureUse } from '@/store/desktop-metrics'
 import { $gateway } from '@/store/gateway'
 import { notify, notifyError } from '@/store/notifications'
 import { $voiceLiveStatus, refreshVoiceLiveStatus, selectedVoiceChatMode } from '@/store/voice-live'
-import { $autoSpeakReplies, $voiceStopPhrase, setAutoSpeakReplies } from '@/store/voice-prefs'
+import {
+  $autoSpeakReplies,
+  $realtimeDialogue,
+  $voiceStopPhrase,
+  setAutoSpeakReplies,
+  setRealtimeDialogue
+} from '@/store/voice-prefs'
 import { resumeWakeAfterVoice } from '@/store/wake-word'
 
 import { pinFloatingComposerCapture } from '../floating-target'
@@ -30,6 +36,7 @@ import { useComposerScope, useComposerSurfaceId } from '../scope'
 import type { ChatBarProps } from '../types'
 
 import { useAutoSpeakReplies } from './use-auto-speak-replies'
+import { useRealtimeVoiceConversation } from './use-realtime-voice-conversation'
 import { useVoiceConversation } from './use-voice-conversation'
 import { useVoiceLiveConversation } from './use-voice-live-conversation'
 import { useVoiceRecorder } from './use-voice-recorder'
@@ -103,6 +110,7 @@ export function useComposerVoice({
   const ownsWakeIndicatorRef = useRef(false)
   const previousSessionIdRef = useRef(sessionId)
   const voiceStartRequest = useStore($voiceConversationStartRequest)
+  const realtimeDialogue = useStore($realtimeDialogue)
 
   // eslint-disable-next-line no-restricted-syntax -- session-id adopt token, not an atom mirror
   useEffect(() => {
@@ -161,14 +169,14 @@ export function useComposerVoice({
     return collectUnspokenTurnSpeech(messages, resolveSpokenReply(sessionId, messages)?.id ?? null)
   }
 
-  const consumePendingResponse = () => {
+  const consumePendingResponse = useCallback(() => {
     const messages = $messages.get()
     const last = messages.findLast(m => m.role === 'assistant' && !m.hidden)
 
     if (last) {
       markAssistantIdSpoken(sessionId, messages, last.id)
     }
-  }
+  }, [sessionId, $messages])
 
   const submitVoiceTurn = async (text: string) => {
     if (busyRef.current) {
@@ -218,7 +226,7 @@ export function useComposerVoice({
   const chainedConversation = useVoiceConversation({
     busy,
     consumePendingResponse,
-    enabled: voiceConversationActive && !liveEngineActive,
+    enabled: voiceConversationActive && !liveEngineActive && !realtimeDialogue,
     onFatalError: () => setVoiceConversationActive(false),
     // Speaking over the model mid-generation interrupts the in-flight turn —
     // the same seam as the Stop button — so the interjection becomes the next
@@ -230,6 +238,7 @@ export function useComposerVoice({
     // teardown (mic close, wake re-arm).
     onStopWord: () => setVoiceConversationActive(false),
     onSubmit: submitVoiceTurn,
+    onDictationText: insertText,
     onTranscribeAudio,
     pendingResponse: pendingTurnResponse,
     // Before the conversation opens the mic, wait for any in-flight wake.pause
@@ -242,7 +251,7 @@ export function useComposerVoice({
     beforeMicOpen: () => wakePauseBarrierRef.current ?? undefined,
     busy,
     consumePendingResponse,
-    enabled: voiceConversationActive && liveEngineActive,
+    enabled: voiceConversationActive && liveEngineActive && !realtimeDialogue,
     onFatalError: () => setVoiceConversationActive(false),
     onInterrupt,
     onStopWord: () => setVoiceConversationActive(false),
@@ -251,7 +260,20 @@ export function useComposerVoice({
     seedHistory: seedLiveHistory
   })
 
-  const conversation = liveEngineActive ? liveConversation : chainedConversation
+  const realtimeConversation = useRealtimeVoiceConversation({
+    enabled: voiceConversationActive && realtimeDialogue,
+    sessionId,
+    onFatalError: () => setVoiceConversationActive(false),
+    onDictationText: insertText,
+    onStopWord: () => setVoiceConversationActive(false),
+    beforeMicOpen: () => wakePauseBarrierRef.current ?? undefined
+  })
+
+  const conversation = realtimeDialogue
+    ? realtimeConversation
+    : liveEngineActive
+      ? liveConversation
+      : chainedConversation
 
   /** Turn the conversation on with the engine `voice.voice_chat_mode` selects,
    *  decided in the same state batch so the other engine never sees a frame of
@@ -375,9 +397,13 @@ export function useComposerVoice({
     if (voiceConversationActive) {
       pauseWakeForVoice()
     } else {
+      // Ending a voice conversation: the dialogue loop already spoke the latest
+      // reply through its own audio. Mark it spoken so auto-speak never re-reads
+      // it after end() calls stopVoicePlayback() (the 'click end -> replay' bug).
+      consumePendingResponse()
       resumeWakeIfPaused()
     }
-  }, [pauseWakeForVoice, resumeWakeIfPaused, voiceConversationActive])
+  }, [consumePendingResponse, pauseWakeForVoice, resumeWakeIfPaused, voiceConversationActive])
 
   // 'Say "stop" to end the voice chat.' notice when the conversation starts.
   // Phrase comes from voice.stop_phrases (first entry) so a custom phrase
@@ -436,8 +462,17 @@ export function useComposerVoice({
     )
   }, [t])
 
+  const toggleRealtimeDialogue = useCallback(() => {
+    void setRealtimeDialogue(!$realtimeDialogue.get()).catch(error =>
+      notifyError(error, t.settings.config.autosaveFailed)
+    )
+  }, [t])
+
   useAutoSpeakReplies({
-    conversationActive: voiceConversationActive,
+    // Realtime dialogue speaks every reply through its own audio stream, so
+    // auto-speak must never re-read them (the 'click end -> reply replays'
+    // bug). Treat realtime mode as conversation-active for auto-speak.
+    conversationActive: voiceConversationActive || realtimeDialogue,
     failureLabel: t.assistant.thread.readAloudFailed,
     markSpoken: consumePendingResponse,
     pendingReply: pendingResponse,
@@ -449,7 +484,9 @@ export function useComposerVoice({
     dictate,
     endConversation,
     handleToggleAutoSpeak,
+    realtimeDialogue,
     startConversation,
+    toggleRealtimeDialogue,
     voiceActivityState,
     voiceConversationActive,
     voiceStatus
