@@ -72,6 +72,7 @@ export function applyVoiceMetricsConfig(cfg: { enabled?: unknown; debug_overlay?
 /** 注册 debug overlay 监听器（voice dock 用）。返回 disposer。 */
 export function onVoiceMetricsUpdate(fn: (turn: TurnRecord) => void): () => void {
   debugListeners.add(fn)
+
   return () => debugListeners.delete(fn)
 }
 
@@ -84,11 +85,13 @@ export function isVoiceMetricsDebugOverlayEnabled(): boolean {
 }
 
 export function startTurn(turnId: string): void {
-  if (!Boolean(_voiceMetricsState['__voiceMetricsEnabled'])) return
+  if (!_voiceMetricsState['__voiceMetricsEnabled']) {return}
+
   // 上一 turn 还没关？强制 flush
   if (currentTurn && currentTurn.turnId !== turnId) {
     void flushTurn()
   }
+
   currentTurn = {
     turnId,
     startedAt: Date.now(),
@@ -105,9 +108,11 @@ export function emit(name: VoiceEventName, meta?: Record<string, unknown>): void
   // stays reachable and the event-push body survives tree-shaking.
   const gateEnabled = Boolean(_voiceMetricsState['__voiceMetricsEnabled'])
   const gateDebug = Boolean(_voiceMetricsState['__voiceMetricsDebugOverlay'])
-  if (!gateEnabled && !gateDebug) return
+
+  if (!gateEnabled && !gateDebug) {return}
   const now = performance.now()
   const wall = Date.now()
+
   const event: VoiceEvent = {
     name,
     t: now - turnT0,
@@ -115,9 +120,11 @@ export function emit(name: VoiceEventName, meta?: Record<string, unknown>): void
     turnId: currentTurn?.turnId ?? 'orphan',
     meta
   }
+
   if (gateEnabled && currentTurn) {
     currentTurn.events.push(event)
   }
+
   if (gateDebug && currentTurn) {
     // 异步通知，不阻塞
     setTimeout(() => {
@@ -130,21 +137,26 @@ export function emit(name: VoiceEventName, meta?: Record<string, unknown>): void
 
 /** 标记 turn 结束，flush 到磁盘。 */
 export function endTurn(): void {
-  if (!Boolean(_voiceMetricsState['__voiceMetricsEnabled'])) {
+  if (!_voiceMetricsState['__voiceMetricsEnabled']) {
     currentTurn = null
+
     return
   }
-  if (!currentTurn) return
+
+  if (!currentTurn) {return}
   emit(VOICE_EVENT.TURN_END)
   void flushTurn()
 }
 
 async function flushTurn(): Promise<void> {
   const turn = currentTurn
+
   if (!turn || turn.events.length === 0) {
     currentTurn = null
+
     return
   }
+
   // 计算 plan §7.1 / §7.2 用到的 9 个 gap
   turn.gaps = computeGaps(turn.events)
   currentTurn = null
@@ -157,12 +169,16 @@ async function flushTurn(): Promise<void> {
 
 function computeGaps(events: VoiceEvent[]): Record<string, number | null> {
   const find = (n: string) => events.find(e => e.name === n)?.t ?? null
+
   const gap = (a: string, b: string): number | null => {
     const ea = find(a)
     const eb = find(b)
-    if (ea === null || eb === null) return null
+
+    if (ea === null || eb === null) {return null}
+
     return Math.round(eb - ea)
   }
+
   return {
     'mic_to_listening': gap(VOICE_EVENT.MIC_OPEN, VOICE_EVENT.SPEECH_START),
     'speech_end_to_stt_final': gap(VOICE_EVENT.SPEECH_END, VOICE_EVENT.STT_FINAL),
@@ -190,18 +206,23 @@ function computeGaps(events: VoiceEvent[]): Record<string, number | null> {
 function resolveHermesHome(): string | null {
   const desktop = (globalThis as { hermesDesktop?: { hermesHome?: unknown } }).hermesDesktop
   const viaBridge = desktop?.hermesHome
+
   if (typeof viaBridge === 'string' && viaBridge) {
     return viaBridge
   }
+
   const viaEnv = (globalThis as { process?: { env?: Record<string, string> } }).process?.env?.HERMES_HOME
+
   if (typeof viaEnv === 'string' && viaEnv) {
     return viaEnv
   }
+
   return null
 }
 
 async function writeJsonl(turn: TurnRecord): Promise<void> {
   const home = resolveHermesHome()
+
   const payload = {
     ts: turn.startedAt,
     turnId: turn.turnId,
@@ -209,6 +230,7 @@ async function writeJsonl(turn: TurnRecord): Promise<void> {
     events: turn.events.map(e => ({ name: e.name, t: e.t, meta: e.meta })),
     gaps: turn.gaps
   }
+
   try {
     // Fire-and-forget IPC: main process appends to voice-metrics.jsonl.
     // Renderer never touches node:fs (browser env has no fs). Sending the
@@ -216,10 +238,13 @@ async function writeJsonl(turn: TurnRecord): Promise<void> {
     // shape and works regardless of whether `hermesHome` is exposed to
     // the renderer (sandboxed preload can't import process.env).
     const desktop = (globalThis as { hermesDesktop?: { appendVoiceMetric?: (p: unknown) => Promise<unknown> } }).hermesDesktop
+
     if (!desktop?.appendVoiceMetric) {
       console.error('[voice-metrics] appendVoiceMetric bridge missing', { turnId: turn.turnId })
+
       return
     }
+
     await desktop.appendVoiceMetric(payload)
   } catch (error) {
     // metrics 错误不能影响语音主流程，但保留落盘失败现场

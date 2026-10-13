@@ -33,6 +33,7 @@ export const $avatarMouthLevel = atom<number>(0)
 
 export const setAvatarMouthLevel = (level: number) => {
   const clamped = Math.max(0, Math.min(1, level))
+
   // Only emit when the value moves meaningfully to avoid waking React on every
   // 60fps tick when nothing is happening.
   if (Math.abs(clamped - $avatarMouthLevel.get()) >= 0.02) {

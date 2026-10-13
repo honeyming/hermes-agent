@@ -19,7 +19,6 @@ import { selectableCardClass } from '@/lib/selectable-card'
 import { cn } from '@/lib/utils'
 import { $avatarEnabled, setAvatarEnabled } from '@/store/avatar'
 import { $petInfo, $petRoam, setPetRoam } from '@/store/pet'
-import { openAvatarOverlay, popInPet } from '@/store/pet-overlay'
 import {
   $petBusy,
   $petGallery,
@@ -39,6 +38,7 @@ import {
   setPetEnabled,
   setPetScale
 } from '@/store/pet-gallery'
+import { openAvatarOverlay, popInPet } from '@/store/pet-overlay'
 import { $gatewayState } from '@/store/session'
 
 import { ListRow, SectionHeading, ToggleRow } from './primitives'

@@ -104,6 +104,7 @@ function isSupported(): boolean {
 
 function generateLeaseId(): string {
   _leaseIdCounter += 1
+
   return `lease-${Date.now()}-${_leaseIdCounter}`
 }
 
@@ -111,17 +112,22 @@ function revokeLease(lease: InternalLease, reason: 'preempted' | 'device-change'
   if (lease.released) {
     return
   }
+
   lease.released = true
   lease.revoked = reason !== 'release'
+
   // 1) 同步触发 onRevoked 回调（caller 立即停 recorder）
   for (const cb of lease.onRevokedCallbacks) {
     try { cb() } catch { /* ignore */ }
   }
+
   lease.onRevokedCallbacks.clear()
+
   // 2) 停 audio track
   for (const track of lease.stream.getTracks()) {
     try { track.stop() } catch { /* ignore */ }
   }
+
   // 3) clear current
   if (_currentLease === lease) {
     _currentLease = null
@@ -132,15 +138,19 @@ function installDeviceChangeListener(): void {
   if (_deviceChangeHandler) {
     return
   }
+
   if (typeof navigator === 'undefined' || !navigator.mediaDevices) {
     return
   }
+
   _deviceChangeHandler = () => {
     // debounce: 多个 devicechange 事件合并
     const now = Date.now()
+
     if (now < _nextDeviceChangeTs) {
       return
     }
+
     _nextDeviceChangeTs = now + CAPTURE_CONFIG.DEVICE_CHANGE_DEBOUNCE_MS
 
     if (_currentLease) {
@@ -149,6 +159,7 @@ function installDeviceChangeListener(): void {
       revokeLease(lease, 'device-change')
     }
   }
+
   navigator.mediaDevices.addEventListener('devicechange', _deviceChangeHandler)
 }
 
@@ -199,6 +210,7 @@ export async function acquireCapture(options: AcquireOptions): Promise<CaptureLe
 
   // 3) getUserMedia
   let stream: MediaStream
+
   try {
     stream = await navigator.mediaDevices.getUserMedia(constraints)
   } catch (err) {
@@ -207,13 +219,16 @@ export async function acquireCapture(options: AcquireOptions): Promise<CaptureLe
 
   // 4) 抽 audio track
   const audioTracks = stream.getAudioTracks()
+
   if (audioTracks.length === 0) {
     // 极端情况：stream 没 audio track
     for (const track of stream.getTracks()) {
       try { track.stop() } catch { /* ignore */ }
     }
+
     throw new Error('in_use')
   }
+
   const audioTrack = audioTracks[0]!
 
   // 5) 注册 lease
@@ -226,10 +241,12 @@ export async function acquireCapture(options: AcquireOptions): Promise<CaptureLe
     released: false,
     onRevokedCallbacks: new Set()
   }
+
   _currentLease = lease
 
   // 6) 返回公开 lease
   let released = false
+
   return {
     id: lease.id,
     ownerId: lease.ownerId,
@@ -239,11 +256,13 @@ export async function acquireCapture(options: AcquireOptions): Promise<CaptureLe
       if (released) {
         return
       }
+
       released = true
       revokeLease(lease, 'release')
     },
     onRevoked: (cb: () => void) => {
       lease.onRevokedCallbacks.add(cb)
+
       // 如果 lease 已经被 revoke（例如 devicechange 刚发生），立即同步触发
       if (lease.revoked) {
         try { cb() } catch { /* ignore */ }
@@ -260,6 +279,7 @@ export function releaseAll(): void {
   if (_currentLease) {
     revokeLease(_currentLease, 'release')
   }
+
   uninstallDeviceChangeListener()
 }
 
@@ -268,6 +288,7 @@ export function _resetForTests(): void {
   if (_currentLease) {
     revokeLease(_currentLease, 'release')
   }
+
   _currentLease = null
   _deviceChangeHandler = null
   _nextDeviceChangeTs = 0
@@ -286,18 +307,26 @@ export function _getCurrentOwnerId(): CaptureOwnerId | null {
 
 function mapMediaError(err: unknown): Error {
   const name = err instanceof DOMException ? err.name : ''
+
   switch (name) {
     case 'NotAllowedError':
+
     case 'SecurityError':
       return new Error('permission_denied')
+
     case 'NotFoundError':
+
     case 'DevicesNotFoundError':
       return new Error('no_device')
+
     case 'NotReadableError':
+
     case 'TrackStartError':
       return new Error('in_use')
+
     case 'OverconstrainedError':
       return new Error('constraints_unsupported')
+
     default:
       return err instanceof Error ? err : new Error('start_failed')
   }

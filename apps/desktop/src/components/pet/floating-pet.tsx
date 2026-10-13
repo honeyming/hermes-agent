@@ -7,6 +7,7 @@ import { useRouteOverlayActive } from '@/app/hooks/use-route-overlay-active'
 import { PetHeartField } from '@/components/chat/vibe-hearts'
 import { PetBubble } from '@/components/pet/pet-bubble'
 import { persistString, storedString } from '@/lib/storage'
+import { $avatarEnabled } from '@/store/avatar'
 import { $changeEventsAvailable, $petChange } from '@/store/live-sync'
 import {
   $petAtRest,
@@ -22,7 +23,6 @@ import {
   setPetInfo
 } from '@/store/pet'
 import { resetPetGallery, setPetScale } from '@/store/pet-gallery'
-import { $avatarEnabled } from '@/store/avatar'
 import { $petOverlayActive, initPetOverlayBridge, openAvatarOverlay, popOutPet, restorePetOverlay } from '@/store/pet-overlay'
 import { $gatewayState } from '@/store/session'
 import { isSecondaryWindow } from '@/store/windows'

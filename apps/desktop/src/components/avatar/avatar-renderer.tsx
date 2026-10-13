@@ -1,6 +1,9 @@
 import { useStore } from '@nanostores/react'
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { type CSSProperties, useCallback, useEffect, useRef, useState } from 'react'
 
+import { hermesApi } from '@/api/client'
+import { useRealtimeVoiceConversation } from '@/app/chat/composer/hooks/use-realtime-voice-conversation'
+import { playSpeechText } from '@/lib/voice-playback'
 import {
   $avatarLastInteraction,
   $avatarMouthLevel,
@@ -8,9 +11,6 @@ import {
 } from '@/store/avatar'
 import { $petActivity, $petUnread } from '@/store/pet'
 import { $awaitingResponse, $busy } from '@/store/session'
-import { hermesApi } from '@/api/client'
-import { playSpeechText } from '@/lib/voice-playback'
-import { useRealtimeVoiceConversation } from '@/app/chat/composer/hooks/use-realtime-voice-conversation'
 
 const assetPath = (path: string) => `${import.meta.env.BASE_URL}${path.replace(/^\/+/, '')}`
 
@@ -321,10 +321,15 @@ const LOVER_LINES: Record<'head' | 'shoulder' | 'belly' | 'legs', string[]> = {
 
 function timeGreetingBucket(): GreetingBucket {
   const hour = new Date().getHours()
-  if (hour >= 5 && hour < 11) return 'morning'
-  if (hour >= 11 && hour < 13) return 'noon'
-  if (hour >= 13 && hour < 18) return 'afternoon'
-  if (hour >= 18 && hour < 23) return 'evening'
+
+  if (hour >= 5 && hour < 11) {return 'morning'}
+
+  if (hour >= 11 && hour < 13) {return 'noon'}
+
+  if (hour >= 13 && hour < 18) {return 'afternoon'}
+
+  if (hour >= 18 && hour < 23) {return 'evening'}
+
   return 'lateNight'
 }
 
@@ -375,6 +380,7 @@ export function AvatarRenderer() {
   const [talking, setTalking] = useState(false)
   const talkingRef = useRef(talking)
   talkingRef.current = talking
+
   const realtime = useRealtimeVoiceConversation({
     enabled: talking,
     onFatalError: () => setTalking(false)
@@ -382,8 +388,10 @@ export function AvatarRenderer() {
 
   const [scale, setScale] = useState(() => {
     const width = window.innerWidth || BASE_W
+
     return Math.max(MIN_SCALE, Math.min(MAX_SCALE, width / BASE_W))
   })
+
   const scaleRef = useRef(scale)
   scaleRef.current = scale
   const [avatarFailed, setAvatarFailed] = useState(false)
@@ -395,6 +403,7 @@ export function AvatarRenderer() {
   const heartsRef = useRef<HTMLDivElement>(null)
   const toastHeartRef = useRef<HTMLDivElement>(null)
   const speechTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+
   const lastZoneLineRef = useRef<Record<'head' | 'shoulder' | 'belly' | 'legs', number>>({
     head: -1,
     shoulder: -1,
@@ -453,6 +462,7 @@ export function AvatarRenderer() {
     }
 
     lastRef.current = index
+
     return pool[index]
   }
 
@@ -468,16 +478,20 @@ export function AvatarRenderer() {
 
     if (!el) {
       setSpeechCaption(null)
+
       return
     }
 
     captionFadingRef.current = true
+
     const anim = el.animate([{ opacity: 1 }, { opacity: 0 }], {
       duration: 320,
       easing: 'ease-in',
       fill: 'forwards'
     })
+
     captionFadeAnimRef.current = anim
+
     anim.onfinish = () => {
       captionFadeAnimRef.current = null
       captionFadingRef.current = false
@@ -500,16 +514,19 @@ export function AvatarRenderer() {
 
     if (text.length <= 1) {
       setSpeechReveal(text.length)
+
       return
     }
 
     revealTimerRef.current = window.setInterval(() => {
       const next = revealCountRef.current + 1
       revealCountRef.current = next
+
       if (next >= captionTextRef.current.length) {
         window.clearInterval(revealTimerRef.current)
         revealTimerRef.current = undefined
       }
+
       setSpeechReveal(next)
     }, revealStepMs(text.length))
   }, [])
@@ -522,14 +539,17 @@ export function AvatarRenderer() {
     captionFadeAnimRef.current = null
     captionTextRef.current = text
     setSpeechCaption(text)
-    if (revealCountRef.current >= text.length || revealTimerRef.current) return
+
+    if (revealCountRef.current >= text.length || revealTimerRef.current) {return}
     revealTimerRef.current = window.setInterval(() => {
       const next = revealCountRef.current + 1
       revealCountRef.current = next
+
       if (next >= captionTextRef.current.length) {
         window.clearInterval(revealTimerRef.current)
         revealTimerRef.current = undefined
       }
+
       setSpeechReveal(next)
     }, revealStepMs(text.length))
   }, [])
@@ -604,6 +624,7 @@ export function AvatarRenderer() {
         window.clearTimeout(realtimeCaptionTimerRef.current)
         fadeOutCaption()
       }
+
       return
     }
 
@@ -644,6 +665,7 @@ export function AvatarRenderer() {
         captionRoleRef.current === 'assistant' &&
         prevReply.length > 0 &&
         reply.startsWith(prevReply)
+
       captionFadingRef.current = false
       realtimeCaptionActiveRef.current = true
       captionRoleRef.current = 'assistant'
@@ -657,6 +679,7 @@ export function AvatarRenderer() {
         setSpeechCaption(reply)
         startReveal(reply)
       }
+
       armRealtimeCaptionTimer(reply.length)
     } else if (userChanged && userText) {
       // Your own words: ASR already streams them in gradually, so show the
@@ -682,6 +705,7 @@ export function AvatarRenderer() {
       if (grows) {
         let shown = Math.max(revealCountRef.current, prevShown.length)
         revealCountRef.current = shown
+
         if (shown >= userText.length) {
           setSpeechReveal(userText.length)
         } else {
@@ -689,14 +713,17 @@ export function AvatarRenderer() {
             shown = 1
             revealCountRef.current = 1
           }
+
           setSpeechReveal(shown)
           revealTimerRef.current = window.setInterval(() => {
             const next = revealCountRef.current + 1
             revealCountRef.current = next
+
             if (next >= captionTextRef.current.length) {
               window.clearInterval(revealTimerRef.current)
               revealTimerRef.current = undefined
             }
+
             setSpeechReveal(next)
           }, revealStepMs(userText.length))
         }
@@ -704,6 +731,7 @@ export function AvatarRenderer() {
         revealCountRef.current = userText.length
         setSpeechReveal(userText.length)
       }
+
       armRealtimeCaptionTimer(userText.length)
     }
   }, [
@@ -720,7 +748,8 @@ export function AvatarRenderer() {
   // a remount of the matching feedback overlay. The store is authoritative so any
   // future IPC / external trigger will paint the same animation.
   useEffect(() => {
-    if (!lastInteraction) return
+    if (!lastInteraction) {return}
+
     if (lastInteraction.kind === 'click') {
       setBlushTick(tick => tick + 1)
     } else if (lastInteraction.kind === 'double-click') {
@@ -744,20 +773,23 @@ export function AvatarRenderer() {
       const line = pickLine(completeLinesRef.current, lastEventLineRef)
       setEventLine(line)
       setEventTick(tick => tick + 1)
-      if (AVATAR_AUTO_SPEECH_ENABLED) speak(line)
+
+      if (AVATAR_AUTO_SPEECH_ENABLED) {speak(line)}
     } else if (celebrate && !prevCelebrateRef.current) {
       setHeartsTick(tick => tick + 1)
       const line = pickLine(completeLinesRef.current, lastEventLineRef)
       setEventLine(line)
       setEventTick(tick => tick + 1)
-      if (AVATAR_AUTO_SPEECH_ENABLED) speak(line)
+
+      if (AVATAR_AUTO_SPEECH_ENABLED) {speak(line)}
     }
 
     if (unreadNow && !prevUnreadRef.current) {
       const line = pickLine(unreadLinesRef.current, lastUnreadLineRef)
       setEventLine(line)
       setEventTick(tick => tick + 1)
-      if (AVATAR_AUTO_SPEECH_ENABLED) speak(line)
+
+      if (AVATAR_AUTO_SPEECH_ENABLED) {speak(line)}
     }
 
     prevJustCompletedRef.current = justCompleted
@@ -781,6 +813,7 @@ export function AvatarRenderer() {
 
         const fallback = pickLine(idleLinesRef.current, lastIdleLineRef)
         setIdleLine(fallback)
+
         // Occasionally voice the canned line (not every time - she murmurs to
         // herself rather than chattering non-stop).
         const speakFallback = () => {
@@ -788,14 +821,17 @@ export function AvatarRenderer() {
             speak(fallback)
           }
         }
+
         const finish = () => {
           if (cancelled) {
             return
           }
+
           hideTimer = setTimeout(() => {
             if (cancelled) {
               return
             }
+
             setIdleLine(null)
             scheduleShow(
               clingyRef.current ? randomBetween(90_000, 180_000) : randomBetween(180_000, 360_000)
@@ -806,16 +842,20 @@ export function AvatarRenderer() {
         // success she always says it (bubble swaps to it), otherwise fall back.
         void (async () => {
           let path = '/api/avatar/proactive' + (clingyRef.current ? '?clingy=1' : '?clingy=0')
+
           try {
             const media = await window.hermesDesktop?.getNowPlaying?.()
             const label = [media?.title, media?.artist].filter(Boolean).join(' - ')
-            if (label) path += '&media=' + encodeURIComponent(label)
+
+            if (label) {path += '&media=' + encodeURIComponent(label)}
           } catch {
             // Media info is optional - proceed without it.
           }
+
           if (personaRef.current) {
             path += '&persona=' + encodeURIComponent(personaRef.current)
           }
+
           try {
             const result = await hermesApi<{ text: string | null }>({
               path,
@@ -823,10 +863,13 @@ export function AvatarRenderer() {
               body: {},
               timeoutMs: 20_000
             })
+
             if (!cancelled) {
               const smart = result?.text?.trim()
+
               if (smart) {
                 setIdleLine(smart)
+
                 if (AVATAR_AUTO_SPEECH_ENABLED && !talkingRef.current) {
                   speak(smart)
                 }
@@ -891,7 +934,7 @@ export function AvatarRenderer() {
   // stay expressive even when the OS asks for less motion. WAAPI is untouched
   // by that rule, so blush/hearts/toasts always play.
   useEffect(() => {
-    if (blushTick === 0) return
+    if (blushTick === 0) {return}
 
     blushRef.current?.animate(
       [
@@ -905,7 +948,7 @@ export function AvatarRenderer() {
   }, [blushTick])
 
   useEffect(() => {
-    if (heartsTick === 0) return
+    if (heartsTick === 0) {return}
 
     heartsRef.current?.querySelectorAll('span').forEach((span, index) => {
       ;(span as HTMLElement).animate(
@@ -921,7 +964,7 @@ export function AvatarRenderer() {
   }, [heartsTick])
 
   useEffect(() => {
-    if (heartTick === 0) return
+    if (heartTick === 0) {return}
 
     toastHeartRef.current?.animate(
       [
@@ -994,6 +1037,7 @@ export function AvatarRenderer() {
       const angle = headAngleRef.current
       angle.x += (target.x * 12 - angle.x) * 0.12
       angle.y += (target.y * 8 - angle.y) * 0.12
+
       if (headRef.current) {
         headRef.current.style.transform = `rotateX(${-angle.y}deg) rotateY(${angle.x}deg)`
       }
@@ -1008,6 +1052,7 @@ export function AvatarRenderer() {
     }
 
     raf = requestAnimationFrame(tick)
+
     return () => cancelAnimationFrame(raf)
   }, [])
 
@@ -1045,9 +1090,11 @@ export function AvatarRenderer() {
         if (active) {
           for (let i = 0; i < SPEECH_BARS; i += 1) {
             const bar = barRefs.current[i]
+
             if (!bar) {
               continue
             }
+
             const wobble = 0.55 + 0.45 * Math.sin(t * SPEECH_BAR_FREQ[i]! + SPEECH_BAR_PHASE[i]!)
             const target = Math.max(3, Math.min(36, drive * SPEECH_BAR_SHAPE[i]! * wobble * 56))
             current[i]! += (target - current[i]!) * 0.3
@@ -1060,6 +1107,7 @@ export function AvatarRenderer() {
     }
 
     raf = requestAnimationFrame(tick)
+
     return () => cancelAnimationFrame(raf)
   }, [])
 
@@ -1067,6 +1115,7 @@ export function AvatarRenderer() {
   // for this user), then is removed when playback settles.
   useEffect(() => {
     const el = speechCaptionRef.current
+
     if (!el) {
       return
     }
@@ -1077,11 +1126,13 @@ export function AvatarRenderer() {
     // Pure opacity only — no translate/scale, so the caption never appears to
     // slide or shift while it fades in.
     el.style.opacity = '0'
+
     const anim = el.animate([{ opacity: 0 }, { opacity: 1 }], {
       duration: 260,
       easing: 'ease-out',
       fill: 'forwards'
     })
+
     anim.onfinish = () => {
       el.style.opacity = '1'
     }
@@ -1130,14 +1181,17 @@ export function AvatarRenderer() {
     belly: BELLY_LINES,
     legs: LEGS_LINES
   })
+
   const zoneLinesRef = useRef(zoneLines)
   zoneLinesRef.current = zoneLines
   const [greetingLines, setGreetingLines] = useState<Record<GreetingBucket, string[]>>(GREETING_LINES)
   const greetingLinesRef = useRef(greetingLines)
   greetingLinesRef.current = greetingLines
+
   const [loverLines, setLoverLines] = useState<Record<'head' | 'shoulder' | 'belly' | 'legs', string[]>>(
     LOVER_LINES
   )
+
   const loverLinesRef = useRef(loverLines)
   loverLinesRef.current = loverLines
   const [idleLines, setIdleLines] = useState<string[]>(IDLE_LINES)
@@ -1165,7 +1219,7 @@ export function AvatarRenderer() {
     let cancelled = false
     window.hermesDesktop?.getAvatarLines?.()
       .then(result => {
-        if (cancelled || !result?.lines) return
+        if (cancelled || !result?.lines) {return}
         const loaded = result.lines
         setZoneLines(prev => ({
           head: Array.isArray(loaded.head) && loaded.head.length ? loaded.head : prev.head,
@@ -1174,33 +1228,47 @@ export function AvatarRenderer() {
           belly: Array.isArray(loaded.belly) && loaded.belly.length ? loaded.belly : prev.belly,
           legs: Array.isArray(loaded.legs) && loaded.legs.length ? loaded.legs : prev.legs
         }))
+
         if (loaded.greetings) {
           setGreetingLines(prev => {
             const next = { ...prev }
+
             for (const key of Object.keys(prev) as GreetingBucket[]) {
               const pool = loaded.greetings?.[key]
-              if (Array.isArray(pool) && pool.length) next[key] = pool
+
+              if (Array.isArray(pool) && pool.length) {next[key] = pool}
             }
+
             return next
           })
         }
+
         if (loaded.loverLines) {
           setLoverLines(prev => {
             const next = { ...prev }
+
             for (const key of Object.keys(prev) as ('head' | 'shoulder' | 'belly' | 'legs')[]) {
               const pool = loaded.loverLines?.[key]
-              if (Array.isArray(pool) && pool.length) next[key] = pool
+
+              if (Array.isArray(pool) && pool.length) {next[key] = pool}
             }
+
             return next
           })
         }
-        if (Array.isArray(loaded.idle) && loaded.idle.length) setIdleLines(loaded.idle)
-        if (Array.isArray(loaded.complete) && loaded.complete.length) setCompleteLines(loaded.complete)
-        if (Array.isArray(loaded.unread) && loaded.unread.length) setUnreadLines(loaded.unread)
-        if (Array.isArray(loaded.weekend) && loaded.weekend.length) setWeekendLines(loaded.weekend)
-        if (loaded.clingy === true) setClingy(true)
+
+        if (Array.isArray(loaded.idle) && loaded.idle.length) {setIdleLines(loaded.idle)}
+
+        if (Array.isArray(loaded.complete) && loaded.complete.length) {setCompleteLines(loaded.complete)}
+
+        if (Array.isArray(loaded.unread) && loaded.unread.length) {setUnreadLines(loaded.unread)}
+
+        if (Array.isArray(loaded.weekend) && loaded.weekend.length) {setWeekendLines(loaded.weekend)}
+
+        if (loaded.clingy === true) {setClingy(true)}
       })
       .catch(() => {})
+
     return () => {
       cancelled = true
     }
@@ -1211,10 +1279,11 @@ export function AvatarRenderer() {
     let cancelled = false
     window.hermesDesktop?.getAvatarAssets?.()
       .then(result => {
-        if (cancelled || !result) return
+        if (cancelled || !result) {return}
         setAvatarAssets(result)
       })
       .catch(() => {})
+
     return () => {
       cancelled = true
     }
@@ -1227,9 +1296,10 @@ export function AvatarRenderer() {
     let cancelled = false
     window.hermesDesktop?.getAvatarPersona?.()
       .then(result => {
-        if (!cancelled && result?.text) setPersonaText(result.text)
+        if (!cancelled && result?.text) {setPersonaText(result.text)}
       })
       .catch(() => {})
+
     return () => {
       cancelled = true
     }
@@ -1240,29 +1310,36 @@ export function AvatarRenderer() {
     const bucket = timeGreetingBucket()
     const day = new Date().getDay()
     const isWeekend = day === 0 || day === 6
+
     const pool =
       isWeekend && weekendLinesRef.current.length > 0
         ? weekendLinesRef.current
         : greetingLinesRef.current[bucket]
-    if (!pool || pool.length === 0) return
+
+    if (!pool || pool.length === 0) {return}
     const phrase = pool[Math.floor(Math.random() * pool.length)]
+
     const timer = setTimeout(() => {
       setEventLine(phrase)
       setEventTick(tick => tick + 1)
-      if (AVATAR_AUTO_SPEECH_ENABLED) speak(phrase)
+
+      if (AVATAR_AUTO_SPEECH_ENABLED) {speak(phrase)}
     }, 1500)
+
     return () => clearTimeout(timer)
   }, [])
 
   const speakZoneLine = useCallback((zone: 'head' | 'shoulder' | 'belly' | 'legs') => {
     // While a live conversation is running, scripted lines stay quiet so they
     // never barge into what the model is saying.
-    if (talkingRef.current) return
+    if (talkingRef.current) {return}
     const pool = zoneLinesRef.current[zone].concat(loverLinesRef.current[zone])
     let index = Math.floor(Math.random() * pool.length)
+
     if (index === lastZoneLineRef.current[zone] && pool.length > 1) {
       index = (index + 1) % pool.length
     }
+
     lastZoneLineRef.current[zone] = index
     const phrase = pool[index]
     // The caption below is the on-screen text for what she says; the pink
@@ -1285,11 +1362,14 @@ export function AvatarRenderer() {
     (e: React.DragEvent) => {
       e.preventDefault()
       e.stopPropagation()
-      if (seeBusy) return
+
+      if (seeBusy) {return}
       const file = e.dataTransfer?.files?.[0]
-      if (!file || !file.type.startsWith('image/')) return
+
+      if (!file || !file.type.startsWith('image/')) {return}
       setSeeBusy(true)
       const reader = new FileReader()
+
       reader.onload = () => {
         void (async () => {
           try {
@@ -1299,7 +1379,9 @@ export function AvatarRenderer() {
               body: { image_b64: String(reader.result ?? ''), persona: personaRef.current },
               timeoutMs: 60_000
             })
+
             const reply = result?.text?.trim()
+
             if (reply) {
               setEventLine(reply)
               setEventTick(tick => tick + 1)
@@ -1314,6 +1396,7 @@ export function AvatarRenderer() {
           }
         })()
       }
+
       reader.onerror = () => setSeeBusy(false)
       reader.readAsDataURL(file)
     },
@@ -1329,11 +1412,13 @@ export function AvatarRenderer() {
       notifyAvatarInteraction('click')
       const rect = e.currentTarget.getBoundingClientRect()
       const y = rect.height > 0 ? (e.clientY - rect.top) / rect.height : 0
+
       const zone: 'head' | 'shoulder' | 'belly' | 'legs' =
         y < 0.3 ? 'head' : y < 0.48 ? 'shoulder' : y < 0.66 ? 'belly' : 'legs'
+
       // Defer speech past the double-click window so a double-click (hearts)
       // never fires two spoken lines.
-      if (speechTimerRef.current) clearTimeout(speechTimerRef.current)
+      if (speechTimerRef.current) {clearTimeout(speechTimerRef.current)}
       speechTimerRef.current = setTimeout(() => speakZoneLine(zone), 280)
     },
     [speakZoneLine]
@@ -1341,26 +1426,28 @@ export function AvatarRenderer() {
 
   const onAvatarDoubleClick = useCallback((e: React.MouseEvent) => {
     e.stopPropagation()
+
     if (speechTimerRef.current) {
       clearTimeout(speechTimerRef.current)
       speechTimerRef.current = undefined
     }
+
     notifyAvatarInteraction('double-click')
   }, [])
 
   // Never let a pending speech timer outlive the overlay.
   useEffect(() => () => {
-    if (speechTimerRef.current) clearTimeout(speechTimerRef.current)
+    if (speechTimerRef.current) {clearTimeout(speechTimerRef.current)}
   }, [])
 
   return (
     <div
-      onDragOver={onDragOver}
-      onDrop={onDropImage}
-      onWheel={onWheel}
-      onPointerDown={onPointerDown}
       onClick={onAvatarClick}
       onDoubleClick={onAvatarDoubleClick}
+      onDragOver={onDragOver}
+      onDrop={onDropImage}
+      onPointerDown={onPointerDown}
+      onWheel={onWheel}
       style={{
         alignItems: 'flex-end',
         cursor: 'grab',
@@ -1402,9 +1489,9 @@ export function AvatarRenderer() {
             />
           )}
           <img
-            ref={closedRef}
             alt="Hermes avatar closed eyes"
             draggable={false}
+            ref={closedRef}
             src={assetPath('avatar-closed.png')}
             style={{ ...imageStyle, inset: 0, opacity: 0, position: 'absolute' }}
           />
@@ -1415,8 +1502,8 @@ export function AvatarRenderer() {
               user always sees the click landed. */}
           {blushTick > 0 && (
             <div
-              key={`blush-${blushTick}`}
               aria-hidden
+              key={`blush-${blushTick}`}
               ref={blushRef}
               style={{
                 background:
@@ -1437,7 +1524,7 @@ export function AvatarRenderer() {
           {/* Heart burst — three hearts float up and fade on double-click and
               on turn-completion / celebration events. */}
           {heartsTick > 0 && (
-            <div ref={heartsRef} key={`hearts-${heartsTick}`} aria-hidden style={{ left: '50%', pointerEvents: 'none', position: 'absolute', top: '46%', userSelect: 'none', width: 0 }}>
+            <div aria-hidden key={`hearts-${heartsTick}`} ref={heartsRef} style={{ left: '50%', pointerEvents: 'none', position: 'absolute', top: '46%', userSelect: 'none', width: 0 }}>
               <span style={{ color: HEART_COLORS[0], fontSize: '64px', left: '-90px', lineHeight: 1, opacity: 0, position: 'absolute', textShadow: '0 2px 10px rgba(140, 100, 130, 0.35)', transform: 'translate(-50%, 0)' }}>♥</span>
               <span style={{ color: HEART_COLORS[1], fontSize: '72px', left: 0, lineHeight: 1, opacity: 0, position: 'absolute', textShadow: '0 2px 10px rgba(140, 100, 130, 0.35)', transform: 'translate(-50%, 0)' }}>♥</span>
               <span style={{ color: HEART_COLORS[2], fontSize: '64px', left: '90px', lineHeight: 1, opacity: 0, position: 'absolute', textShadow: '0 2px 10px rgba(140, 100, 130, 0.35)', transform: 'translate(-50%, 0)' }}>♥</span>
@@ -1447,8 +1534,8 @@ export function AvatarRenderer() {
           {/* Double-click toast — bigger heart label up top. */}
           {heartTick > 0 && (
             <div
-              key={`toast-heart-${heartTick}`}
               aria-hidden
+              key={`toast-heart-${heartTick}`}
               ref={toastHeartRef}
               style={{
                 background: 'rgba(169, 143, 181, 0.92)',
@@ -1477,8 +1564,8 @@ export function AvatarRenderer() {
               so it reads as an accomplishment, not a click or affection cue. */}
           {eventLine && (
             <div
-              key={`event-${eventTick}`}
               aria-hidden
+              key={`event-${eventTick}`}
               ref={eventToastRef}
               style={{
                 background: 'rgba(216, 166, 106, 0.92)',
@@ -1507,8 +1594,8 @@ export function AvatarRenderer() {
           {/* Idle thought bubble — only while quiet, fades in/out via WAAPI. */}
           {idleLine && (
             <div
-              ref={idleBubbleRef}
               aria-hidden
+              ref={idleBubbleRef}
               style={{
                 background: 'rgba(42, 32, 44, 0.78)',
                 borderRadius: '999px',
@@ -1543,9 +1630,9 @@ export function AvatarRenderer() {
           outline so glyphs stay sharp, no background. */}
       {speechCaption && (
         <div
+          aria-hidden
           key={`cap-${captionTick}`}
           ref={speechCaptionRef}
-          aria-hidden
           style={{
             alignItems: 'center',
             display: 'flex',
@@ -1590,8 +1677,8 @@ export function AvatarRenderer() {
           caption so the pair reads as one compact unit near the top, without
           spreading down over the face; no tilt, no glow blob. */}
       <div
-        ref={waveformRef}
         aria-hidden
+        ref={waveformRef}
         style={{
           alignItems: 'flex-end',
           display: 'flex',

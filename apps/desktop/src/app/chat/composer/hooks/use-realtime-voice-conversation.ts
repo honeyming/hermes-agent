@@ -63,6 +63,7 @@ const PAUSE_CONFIRMATIONS = [
   '\u597d\u7684\uff0c\u9a6c\u54e5',
   '\u597d\u7684'
 ]
+
 // Spoken answer to the wake word: 马哥 asked for 小赫 to say "在呢，马哥" instead of
 // only chiming. Doubao voices it (ChatTTSText) so the wording is exact and the
 // audio rides the realtime dialogue stream.

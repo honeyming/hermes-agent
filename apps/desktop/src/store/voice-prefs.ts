@@ -176,6 +176,7 @@ export function applyRealtimeDialogueFromConfig(
     config?.voice && typeof config.voice === 'object'
       ? (config.voice as Record<string, unknown>)
       : undefined
+
   $realtimeDialogue.set(voice?.realtime_dialogue === true)
 }
 

@@ -1223,16 +1223,21 @@ ipcMain.handle('hermes:embed-host:origin', () => embedHostOrigin())
 ipcMain.handle('hermes:avatar-lines:get', async () => {
   try {
     const userPath = path.join(app.getPath('userData'), 'avatar-lines.json')
+
     if (!fs.existsSync(userPath)) {
       const bundled = path.join(APP_ROOT, 'dist', 'avatar-lines.json')
+
       if (fs.existsSync(bundled)) {
         fs.copyFileSync(bundled, userPath)
       }
     }
+
     if (!fs.existsSync(userPath)) {
       return null
     }
+
     const lines = JSON.parse(fs.readFileSync(userPath, 'utf8'))
+
     return { path: userPath, lines }
   } catch {
     return null
@@ -1246,18 +1251,23 @@ ipcMain.handle('hermes:avatar-lines:get', async () => {
 ipcMain.handle('hermes:avatar-assets:get', async () => {
   const names = ['avatar.webp', 'avatar-slow.webp', 'avatar-still.png'] as const
   const result: Record<string, string> = {}
+
   try {
     for (const name of names) {
       const userPath = path.join(app.getPath('userData'), name)
+
       if (!fs.existsSync(userPath)) {
         const bundled = path.join(APP_ROOT, 'dist', name)
+
         if (fs.existsSync(bundled)) {
           fs.copyFileSync(bundled, userPath)
         }
       }
+
       const chosen = fs.existsSync(userPath) ? userPath : path.join(APP_ROOT, 'dist', name)
       result[name] = pathToFileURL(chosen).toString()
     }
+
     return result
   } catch {
     return null
@@ -1271,16 +1281,21 @@ ipcMain.handle('hermes:avatar-assets:get', async () => {
 ipcMain.handle('hermes:avatar-persona:get', async () => {
   try {
     const userPath = path.join(app.getPath('userData'), 'avatar-persona.md')
+
     if (!fs.existsSync(userPath)) {
       const bundled = path.join(APP_ROOT, 'dist', 'avatar-persona.md')
+
       if (fs.existsSync(bundled)) {
         fs.copyFileSync(bundled, userPath)
       }
     }
+
     const chosen = fs.existsSync(userPath) ? userPath : path.join(APP_ROOT, 'dist', 'avatar-persona.md')
+
     if (!fs.existsSync(chosen)) {
       return null
     }
+
     return { path: chosen, text: fs.readFileSync(chosen, 'utf8') }
   } catch {
     return null
@@ -1294,27 +1309,36 @@ ipcMain.handle('hermes:avatar-image:read', async () => {
   try {
     const names = ['avatar-still.png', 'avatar.webp', 'avatar-slow.webp'] as const
     let chosen = ''
+
     for (const name of names) {
       const userPath = path.join(app.getPath('userData'), name)
+
       if (fs.existsSync(userPath)) {
         chosen = userPath
+
         break
       }
     }
+
     if (!chosen) {
       for (const name of names) {
         const bundled = path.join(APP_ROOT, 'dist', name)
+
         if (fs.existsSync(bundled)) {
           chosen = bundled
+
           break
         }
       }
     }
+
     if (!chosen) {
       return null
     }
+
     const mime = chosen.toLowerCase().endsWith('.png') ? 'image/png' : 'image/webp'
     const base64 = fs.readFileSync(chosen).toString('base64')
+
     return { dataUrl: `data:${mime};base64,${base64}` }
   } catch {
     return null
@@ -1354,6 +1378,7 @@ function readNowPlaying(): Promise<NowPlayingInfo | null> {
   if (nowPlayingCache && Date.now() - nowPlayingCache.at < 12_000) {
     return Promise.resolve(nowPlayingCache.value)
   }
+
   return new Promise(resolve => {
     const encoded = Buffer.from(NOW_PLAYING_PS, 'utf16le').toString('base64')
     execFile(
@@ -1362,8 +1387,10 @@ function readNowPlaying(): Promise<NowPlayingInfo | null> {
       { timeout: 8000, windowsHide: true, encoding: 'utf8', maxBuffer: 64 * 1024 },
       (_error, stdout) => {
         let value: NowPlayingInfo | null = null
+
         try {
           const parsed = JSON.parse(String(stdout || '').trim())
+
           if (parsed && parsed.title) {
             value = {
               title: String(parsed.title),
@@ -1375,6 +1402,7 @@ function readNowPlaying(): Promise<NowPlayingInfo | null> {
         } catch {
           value = null
         }
+
         nowPlayingCache = { at: Date.now(), value }
         resolve(value)
       }

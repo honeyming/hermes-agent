@@ -23,8 +23,8 @@ import { refreshVoiceLiveStatus } from '@/store/voice-live'
 import {
   applyAutoSpeakFromConfig,
   applyBargeInEnabledFromConfig,
-  applyRealtimeDialogueFromConfig,
   applyBargeInThresholdFromConfig,
+  applyRealtimeDialogueFromConfig,
   applyThinkingSoundFromConfig,
   applyVoiceSilenceMsFromConfig,
   applyVoiceStopPhraseFromConfig

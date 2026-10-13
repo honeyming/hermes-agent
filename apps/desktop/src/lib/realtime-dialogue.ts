@@ -9,8 +9,8 @@
 import { resolveGatewayWsUrl } from '@hermes/shared'
 
 import { getApiRequestProfile } from '@/hermes'
-import { setAvatarMouthLevel } from '@/store/avatar'
 import { PcmPlayoutBuffer } from '@/lib/pcm-playout-buffer'
+import { setAvatarMouthLevel } from '@/store/avatar'
 
 export interface RealtimeDialogueCallbacks {
   sessionId?: string | null
@@ -129,10 +129,12 @@ function openRealtimeDialogue(wsUrl: string, callbacks: RealtimeDialogueCallback
       }
 
       settled = true
+
       if (energyRaf !== 0) {
         window.cancelAnimationFrame(energyRaf)
         energyRaf = 0
       }
+
       setAvatarMouthLevel(0)
 
       try {
@@ -170,19 +172,25 @@ function openRealtimeDialogue(wsUrl: string, callbacks: RealtimeDialogueCallback
       if (energyRaf === 0) {
         const tick = () => {
           const analyser = outputAnalyser
+
           if (!analyser || !context) {
             energyRaf = 0
+
             return
           }
+
           analyser.getByteTimeDomainData(energyData)
           let sum = 0
+
           for (const value of energyData) {
             const centered = value - 128
             sum += centered * centered
           }
+
           setAvatarMouthLevel(Math.min(1, Math.sqrt(sum / energyData.length) / 42))
           energyRaf = window.requestAnimationFrame(tick)
         }
+
         tick()
       }
     }
@@ -291,6 +299,7 @@ function openRealtimeDialogue(wsUrl: string, callbacks: RealtimeDialogueCallback
     source.buffer = buffer
     const gain = context.createGain()
     source.connect(gain)
+
     if (masterGain) {
       gain.connect(masterGain)
     } else {
