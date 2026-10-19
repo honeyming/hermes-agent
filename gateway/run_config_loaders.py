@@ -91,9 +91,11 @@ class GatewayConfigLoadersMixin:
 
     @staticmethod
     def _load_ephemeral_system_prompt() -> str:
-        """HERMES_EPHEMERAL_SYSTEM_PROMPT env first, then ``display.personality`` / ``agent.system_prompt``."""
+        """HERMES_EPHEMERAL_SYSTEM_PROMPT env first (a local session's: its client's), then
+        ``display.personality`` / ``agent.system_prompt``."""
+        from agent.session_client_env import session_env
         from gateway.run import _load_gateway_config
-        prompt = os.getenv("HERMES_EPHEMERAL_SYSTEM_PROMPT", "")
+        prompt = session_env("HERMES_EPHEMERAL_SYSTEM_PROMPT")
         if prompt:
             return prompt
         return resolve_ephemeral_system_prompt_from_config(_load_gateway_config())
@@ -146,17 +148,17 @@ class GatewayConfigLoadersMixin:
         return self._load_ephemeral_system_prompt()
 
     @staticmethod
-    def _load_reasoning_config(model: str = "", *, is_voice: bool = False) -> dict | None:
+    def _load_reasoning_config(model: str = "") -> dict | None:
         """Reasoning effort from config.yaml via :func:`hermes_constants.resolve_reasoning_config`.
 
-        Per-model override > ``voice.reasoning_effort`` (when ``is_voice=True``) >
-        global ``agent.reasoning_effort``; YAML False = disabled. Empty ``model`` uses ``model.default``.
+        Per-model override > global ``agent.reasoning_effort``; YAML False = disabled. Empty
+        ``model`` uses ``model.default``.
 
         Closes #21256.
         """
         from gateway.run import _load_gateway_config
         from hermes_constants import resolve_reasoning_config
-        return resolve_reasoning_config(_load_gateway_config(), model, is_voice=is_voice)
+        return resolve_reasoning_config(_load_gateway_config(), model)
 
     @staticmethod
     def _parse_reasoning_command_args(raw_args: str) -> tuple[str, bool]:
@@ -174,20 +176,23 @@ class GatewayConfigLoadersMixin:
 
     def _resolve_session_reasoning_config(
         self, *, source: Optional[SessionSource] = None, session_key: Optional[str] = None,
-        model: str = "", is_voice: bool = False,
+        model: str = "",
     ) -> dict | None:
         """Session ``/reasoning --session`` > per-model ``agent.reasoning_overrides`` > global.
 
         ``model`` must be the session's *effective* model (session ``/model`` override included);
-        empty uses ``model.default``. ``is_voice`` routes through ``voice.reasoning_effort`` as
-        the global fallback so voice turns can use a lighter effort than text turns.
+        empty uses ``model.default``.
         """
         resolved_session_key = self._resolve_session_key_or_none(source, session_key)
         if resolved_session_key:
             _r_state = self._peek_session_state(resolved_session_key)
             if _r_state is not None and _r_state.conversation.reasoning_override is not None:
                 return _r_state.conversation.reasoning_override
-        return self._load_reasoning_config(model, is_voice=is_voice)
+        from gateway.session_setting_commands import local_policy
+        if (policy := local_policy(self, source)) is not None:
+            # A local session runs its frozen (or followed) level, not the profile's.
+            return policy.current_reasoning_config(self, resolved_session_key)
+        return self._load_reasoning_config(model)
 
     def _set_session_reasoning_override(self, session_key: str, reasoning_config: Optional[dict]) -> None:
         """Set or clear the session-scoped reasoning override."""
@@ -209,6 +214,10 @@ class GatewayConfigLoadersMixin:
             _t_state = self._peek_session_state(resolved_session_key)
             if _t_state is not None and _t_state.conversation.service_tier_override is not _SERVICE_TIER_UNSET:
                 return _t_state.conversation.service_tier_override
+        from gateway.session_setting_commands import local_live_for_route, local_policy
+        live = local_live_for_route(self, resolved_session_key)
+        if live is not None and (policy := local_policy(self, live.source)) is not None:
+            return policy.current_service_tier(self, resolved_session_key)  # its frozen tier, not config.yaml's
         return self._load_service_tier()
 
     def _set_session_service_tier_override(self, session_key: str, service_tier, clear: bool = False) -> None:
