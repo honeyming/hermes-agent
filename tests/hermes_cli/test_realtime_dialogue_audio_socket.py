@@ -1,6 +1,8 @@
 import asyncio
 from types import SimpleNamespace
 
+import pytest
+
 from hermes_cli.dashboard_auth import native_http
 from hermes_cli.web_routers import avatar, webapp
 from hermes_cli.web_session_sockets import AUDIO_SOCKETS, DIALOGUE_SOCKET
@@ -68,3 +70,25 @@ def test_dialogue_route_uses_the_dialogue_socket_name(monkeypatch):
 
     assert calls == [{"socket": DIALOGUE_SOCKET}]
     assert closed == [4401]
+
+
+def test_dialogue_accepts_the_negotiated_gateway_subprotocol(monkeypatch):
+    accepted = []
+
+    class StopAfterAccept(Exception):
+        pass
+
+    class FakeWebSocket:
+        _hermes_ws_subprotocol = "hermes-gateway-v1"
+
+        async def accept(self, subprotocol=None):
+            accepted.append(subprotocol)
+            raise StopAfterAccept
+
+    monkeypatch.setattr(avatar, "_ws_auth_ok", lambda ws, **kwargs: True)
+    monkeypatch.setattr(avatar, "_ws_request_is_allowed", lambda ws: True)
+
+    with pytest.raises(StopAfterAccept):
+        asyncio.run(avatar.dialogue_ws(FakeWebSocket()))
+
+    assert accepted == ["hermes-gateway-v1"]

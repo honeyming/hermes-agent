@@ -268,7 +268,7 @@ async def dialogue_ws(ws: "WebSocket") -> None:
     if not _ws_request_is_allowed(ws):
         await ws.close(code=4403)
         return
-    await ws.accept()
+    await ws.accept(subprotocol=getattr(ws, "_hermes_ws_subprotocol", None))
 
     profile = (ws.query_params.get("profile") or "").strip() or None
     session_id = (ws.query_params.get("session_id") or "").strip() or ""
