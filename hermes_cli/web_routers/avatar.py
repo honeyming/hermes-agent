@@ -22,6 +22,7 @@ from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
 from hermes_cli.config import cfg_get, load_config
 from hermes_cli.web_deps import late
 from hermes_cli.web_server_chat import _ws_auth_ok, _ws_request_is_allowed
+from hermes_cli.web_session_sockets import DIALOGUE_SOCKET
 
 _log = logging.getLogger("hermes_cli.web_server")
 router = APIRouter()
@@ -261,7 +262,7 @@ async def dialogue_ws(ws: "WebSocket") -> None:
                 binary 24 kHz int16 mono PCM frames,
                 ``{"type": "end"}`` when the spoken reply is done
     """
-    if not _ws_auth_ok(ws):
+    if not _ws_auth_ok(ws, socket=DIALOGUE_SOCKET):
         await ws.close(code=4401)
         return
     if not _ws_request_is_allowed(ws):

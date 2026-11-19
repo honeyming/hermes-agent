@@ -28,6 +28,13 @@ describe('openGatewaySocket', () => {
     ])
   })
 
+  it('moves the realtime dialogue ticket into the gateway subprotocol', () => {
+    expect(open('ws://127.0.0.1:5151/api/audio/dialogue?native_dial=n1&ticket=t1&mode=full_duplex')).toEqual([
+      'ws://127.0.0.1:5151/api/audio/dialogue?native_dial=n1&mode=full_duplex',
+      ['hermes-gateway-v1', 'hermes-gateway-ticket.t1']
+    ])
+  })
+
   it('refuses a local dial without a ticket', () => {
     expect(() => open('ws://127.0.0.1:5151/api/audio/transcribe-stream?native_dial=n1')).toThrow(/fresh private ticket/)
     expect(dials).toEqual([])

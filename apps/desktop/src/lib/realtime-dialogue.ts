@@ -8,6 +8,7 @@
 
 import { resolveGatewayWsUrl } from '@hermes/shared'
 
+import { openGatewaySocket } from '@/api/canonical-protocol'
 import { getApiRequestProfile } from '@/hermes'
 import { setAvatarMouthLevel } from '@/store/avatar'
 import { PcmPlayoutBuffer } from '@/lib/pcm-playout-buffer'
@@ -86,7 +87,7 @@ function toArrayBuffer(data: ArrayBuffer | ArrayBufferView): ArrayBuffer {
 }
 
 function openRealtimeDialogue(wsUrl: string, callbacks: RealtimeDialogueCallbacks): RealtimeDialogueSession {
-  const ws = new WebSocket(wsUrl)
+  const ws = openGatewaySocket(wsUrl)
   ws.binaryType = 'arraybuffer'
 
   let context: AudioContext | null = null
